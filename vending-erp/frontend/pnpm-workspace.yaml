@@ -1,0 +1,4 @@
+# 允许这两个包跑 postinstall(esbuild 装平台二进制 / vue-demi 选 Vue3 入口)
+allowBuilds:
+  esbuild: true
+  vue-demi: true
