@@ -4,6 +4,8 @@
 框架状态:selectors 为占位,首次 --probe 联真后回填 config.yaml。
 账密永远来自本地 .env,脚本只做 登录→导出→下载,不做任何修改类操作。
 """
+from __future__ import annotations
+
 import argparse
 import datetime as dt
 import os
