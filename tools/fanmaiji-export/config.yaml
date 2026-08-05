@@ -1,0 +1,23 @@
+# fanmaiji.top 导出配置 —— selectors 为占位值(按调研附录 B 的菜单名写),首次 --probe 联真后回填
+# 定时示例(crontab):每天 07:30 下载昨日数据
+#   30 7 * * * cd /Users/yh-1/系统开发/智慧园区/tools/fanmaiji-export && python3 export.py --all >> cron.log 2>&1
+
+login:
+  url_path: "/login"                # 待核:登录页路径
+  user_selector: "input[name=username]"   # 占位
+  pass_selector: "input[name=password]"   # 占位
+  submit_selector: "button[type=submit]"  # 占位
+
+exports:
+  sales:            # 销售管理 → 出货明细(查询限当月+上月,导出支持一年)
+    menu_text: "出货明细"
+    export_button_text: "导出"
+    date_range_param: month         # 按月导
+  replenish:        # 数据管理 → 系统补货记录(货道级,负数=取出调整)
+    menu_text: "系统补货记录"
+    export_button_text: "导出"
+    date_range_param: month
+  products:         # 商品管理 → 商品列表(98 个,含条码,别名初始化用)
+    menu_text: "商品管理"
+    export_button_text: "导出"
+    date_range_param: none
