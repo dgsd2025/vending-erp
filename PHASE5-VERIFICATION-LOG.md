@@ -91,3 +91,12 @@ mysql: healthy
 - 操作:V1.0.0__placeholder.sql → V1.0.0__init.sql(39 表全量 DDL);DROP/CREATE vend_dev 后由 Flyway 重新迁移
 - 证据:`SELECT COUNT(*) ... table_name LIKE 'yc_vend_%'` → **39**;`flyway_schema_history` → `1.0.0 | init | success=1`;/api/v1/health → `{"code":200,...}`
 - 坑:老 placeholder 残留 target/classes 导致 "Found more than one migration with version 1.0.0",`rm -rf target/classes/db` 后通过
+
+## M1-3 · 导入中心三通道(2026-08-06)
+
+- 范围:`modules/imports/`(两步式上传预览→确认入账 · 三通道 · 批次/行错/整批回滚/重处理待绑定/改价侦测)+ `views/Imports.vue` + V1.0.1 迁移(sale_record 补 alias_barcode_raw)
+- 证据(全文见 `verification/M1-3.md`):
+  - 集成测试 `ImportServiceTest` 14/14 绿(vend_test_imports 独立库);全量回归 `mvn test` **48/48 绿**
+  - 真实数据全量导入:5135 行经 API 导入 13.1s,`SUM(amount_received)=25113.50` 与冲刺0基准对平,0 待绑定;重复导入第二次 `rowDup=5135` 零新增
+  - 前端 `pnpm build` ✓;浏览器真流程(真文件上传→预览列映射全✓→确认→批次历史/待绑定抽屉)console 0 错
+- 坑:真实数据 913 个订单一单多行会撞 uk(order_no,order_type) → 文件内出现次序加确定性后缀 `#k`;出货明细无商品编号列 → 条码为主/名称兜底;明细实际 3 台设备(数据字典写 2 台是漏数)

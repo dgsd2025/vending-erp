@@ -82,6 +82,13 @@
             <version>${knife4j.version}</version>
         </dependency>
 
+        <!-- Excel 解析:Apache POI(导入中心 M1-3 三通道,仅读 .xlsx 用 poi-ooxml) -->
+        <dependency>
+            <groupId>org.apache.poi</groupId>
+            <artifactId>poi-ooxml</artifactId>
+            <version>5.2.5</version>
+        </dependency>
+
         <!-- 工具 -->
         <dependency>
             <groupId>cn.hutool</groupId>

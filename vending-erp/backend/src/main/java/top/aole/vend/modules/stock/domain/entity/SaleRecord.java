@@ -26,6 +26,8 @@ public class SaleRecord {
     private String deviceId;
     private String slotNo;
     private String aliasCodeRaw;
+    /** 后台条形码原值(V1.0.1 补列):通道1别名匹配以条码为主、名称兜底;待绑定行重处理回补用 */
+    private String aliasBarcodeRaw;
     private String aliasNameRaw;
     private Long productId;
     private BigDecimal qty;
