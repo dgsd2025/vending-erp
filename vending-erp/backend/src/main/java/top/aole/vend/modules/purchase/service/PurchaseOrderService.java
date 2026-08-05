@@ -137,6 +137,34 @@ public class PurchaseOrderService {
         }
     }
 
+    /**
+     * 红冲回冲后重算状态(M1-7,唯一调用方=PurchaseReceiptListener 红冲分支,同事务):
+     * 与 recomputeStatus 的差别是允许**降级**——已完成的订单被红冲收货后要重新打开:
+     * 全收→已完成;有收未全→部分到货;一件没收→回到已下单(在途恢复)。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void reopenAfterRedFlush(Long poId, Long userId) {
+        PurchaseOrder po = mustGet(poId);
+        if (!ACTIVE_STATUS.contains(po.getPoStatus()) && !PurchaseOrder.ST_DONE.equals(po.getPoStatus())) {
+            throw new BizException(String.format("订货单[%s]状态[%s]无法回冲收货", po.getPoNo(), po.getPoStatus()));
+        }
+        List<PurchaseOrderItem> items = itemsOf(poId);
+        boolean allDone = items.stream()
+                .allMatch(i -> i.getQtyReceived().compareTo(i.getQtyOrdered()) >= 0);
+        boolean anyReceived = items.stream()
+                .anyMatch(i -> i.getQtyReceived().compareTo(BigDecimal.ZERO) > 0);
+        String target = allDone ? PurchaseOrder.ST_DONE
+                : anyReceived ? PurchaseOrder.ST_PARTIAL : PurchaseOrder.ST_PLACED;
+        if (!target.equals(po.getPoStatus())) {
+            String before = JSONUtil.toJsonStr(po);
+            po.setPoStatus(target);
+            po.setUpdateUser(userId);
+            poMapper.updateById(po);
+            opLogService.recordJson(userId, "红冲回冲→" + target, "purchase_order", poId,
+                    before, JSONUtil.toJsonStr(po));
+        }
+    }
+
     // ============================== 查询 ==============================
 
     /** 分页列表,带 已收合计/在途/超期黄灯 */

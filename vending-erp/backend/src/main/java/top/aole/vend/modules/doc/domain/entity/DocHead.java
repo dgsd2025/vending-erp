@@ -51,8 +51,10 @@ public class DocHead {
     private LocalDateTime confirmAt;
     private Long confirm2By;
     private LocalDateTime confirm2At;
-    /** 入账月 YYYY-MM(P0-2 锁账×补导) */
+    /** 入账月 YYYY-MM(P0-2 锁账×补导):确认时落账,业务月已锁 → 入当前月 */
     private String bookPeriod;
+    /** 利润表行标记(M1-7 成本调整单已售部分='成本调整',M3 报表实装取数) */
+    private String plLine;
     private String remark;
 
     private Long createUser;

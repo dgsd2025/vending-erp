@@ -2,6 +2,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import ProductSelect from '@/components/basedata/ProductSelect.vue'
+import RedFlushDialog from '@/components/doc/RedFlushDialog.vue'
+import CostAdjustDialog from '@/components/doc/CostAdjustDialog.vue'
 import { pageSuppliers, type Supplier } from '@/api/basedata'
 import {
   cancelPurchaseOrder, closePurchaseOrder, confirmReceipt, createPurchaseOrder,
@@ -334,6 +336,33 @@ function docStatusChip(status: string) {
   return { 草稿: 'c-gray', 待确认: 'c-blue', 已确认: 'c-green', 待结算: 'c-amber', 已结算: 'c-green', 已完成: 'c-green', 已红冲: 'c-red', 已作废: 'c-gray' }[status] || 'c-gray'
 }
 
+// ============================== 红冲 / 成本调整(M1-7) ==============================
+
+const redFlushVisible = ref(false)
+const costAdjustVisible = ref(false)
+const reverseDocId = ref<number | null>(null)
+/** 成本调整对话框的商品名映射(从入库单详情行带出) */
+const reverseProductNames = computed<Record<number, string>>(() =>
+  Object.fromEntries((receiptDetail.value?.items || [])
+    .map((i: any) => [i.productId, `${i.skuCode ?? ''} · ${i.productName ?? i.productId}`])))
+
+function openRedFlush() {
+  if (!receiptDetail.value) return
+  reverseDocId.value = receiptDetail.value.head.id
+  redFlushVisible.value = true
+}
+
+function openCostAdjust() {
+  if (!receiptDetail.value) return
+  reverseDocId.value = receiptDetail.value.head.id
+  costAdjustVisible.value = true
+}
+
+function afterReverse() {
+  receiptDetailVisible.value = false
+  refreshAll()
+}
+
 // ============================== 在途汇总 ==============================
 
 const inTransitRows = ref<InTransitRow[]>([])
@@ -658,8 +687,25 @@ onMounted(() => {
           <template #default="{ row }"><span class="num">¥{{ Number(row.amount).toFixed(2) }}</span></template>
         </el-table-column>
       </el-table>
-      <p class="mini" style="margin-top: 10px">确认后的单据不可改不可删;录错走红冲(M1-7)。结算付款链(应付/凭证/核销)M3 开通。</p>
+      <p class="mini" style="margin-top: 10px">
+        确认后的单据不可改不可删:<b>数量录错→红冲</b>(整单反向,必过影响清单);<b>单价录错→成本调整</b>(不动数量只调金额)。
+        结算付款链(应付/凭证/核销)M3 开通。
+      </p>
+      <template #footer>
+        <el-button @click="receiptDetailVisible = false">关闭</el-button>
+        <template v-if="receiptDetail?.head.docStatus === '已确认'">
+          <el-button type="warning" plain @click="openCostAdjust">🧮 成本调整(单价错)</el-button>
+          <el-button type="danger" plain @click="openRedFlush">🔄 红冲(数量错)</el-button>
+        </template>
+      </template>
     </el-dialog>
+
+    <!-- 红冲影响清单确认对话框 / 成本调整对话框(M1-7,components/doc) -->
+    <RedFlushDialog v-model="redFlushVisible" :doc-id="reverseDocId" @done="afterReverse" />
+    <CostAdjustDialog
+      v-model="costAdjustVisible" :doc-id="reverseDocId"
+      :product-names="reverseProductNames" @done="afterReverse"
+    />
   </div>
 </template>
 

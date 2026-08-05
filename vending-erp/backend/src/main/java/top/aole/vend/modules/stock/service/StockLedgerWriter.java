@@ -43,6 +43,27 @@ class StockLedgerWriter {
         insert(head, item, StockLedger.LOC_WAREHOUSE, null, signedQty, after, bizTime);
     }
 
+    /**
+     * 成本调整流水(M1-7,附录C 过账契约):qty=0、amount=Δ金额,只动金额不动数量。
+     * 移动加权引擎(M1-6)按 ledger 时序遍历时,qty=0 行只累加金额 → 单位成本随之变;
+     * 结存数量不变(balance=当前值),不做负库存拦截(数量为 0 天然无拦截语义)。
+     */
+    void postCostAdjust(DocHead head, DocItem item, BigDecimal deltaAmount, LocalDateTime bizTime) {
+        BigDecimal current = nvl(stockLedgerMapper.sumWarehouse(item.getProductId()));
+        StockLedger ledger = new StockLedger();
+        ledger.setProductId(item.getProductId());
+        ledger.setLocationType(StockLedger.LOC_WAREHOUSE);
+        ledger.setDocId(head.getId());
+        ledger.setDocItemId(item.getId());
+        ledger.setChangeQty(BigDecimal.ZERO);
+        ledger.setBalanceQty(current);
+        ledger.setUnitCost(null); // qty=0 行无单价语义;金额进 amount,加权引擎按契约只动金额
+        ledger.setAmount(deltaAmount);
+        ledger.setBizTime(bizTime);
+        ledger.setCreateUser(head.getConfirmBy());
+        stockLedgerMapper.insert(ledger);
+    }
+
     /** 按单据明细写一条机器账流水(机器侧不做负库存拦截,权威在后台,差异走盘点) */
     void postMachine(DocHead head, DocItem item, BigDecimal signedQty, LocalDateTime bizTime) {
         BigDecimal current = nvl(stockLedgerMapper.sumMachineTransferAfter(

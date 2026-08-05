@@ -8,7 +8,8 @@ import lombok.Getter;
  * 单据类型十枚举(与 yc_vend_doc_head.doc_type 中文值一一对应)。
  *
  * 每个类型自带库存方向配置(仓库/机器各 +1/-1/0),库存引擎按此过账,禁止散落 if-else。
- * 红冲/成本调整/资金调整的连锁过账逻辑 M1-7 实现(postingDeferred=true 时引擎跳过并留 TODO)。
+ * 红冲=按原单方向反向过账;成本调整=qty=0/amount=Δ 调整流水(两者 M1-7 已实现);
+ * 资金调整 postingDeferred=true(M3 生成 cash_flow,引擎跳过并留 TODO)。
  */
 @Getter
 public enum DocType {
@@ -25,10 +26,10 @@ public enum DocType {
     LOSS_OUT("盘亏出库", "PK", -1, 0, false, false),
     /** 报损:仓库 − */
     DAMAGE("报损", "BS", -1, 0, false, false),
-    /** 红冲:反向冲原单(P0-1)。连锁过账 M1-7;通道(red_flush_of+状态机+免负库存)已留好 */
-    RED_FLUSH("红冲", "HC", 0, 0, true, true),
-    /** 成本调整(P0-1 单价错专用):不动数量;未售调 stock_ledger.unit_cost/已售进利润表,M1-7 */
-    COST_ADJUST("成本调整", "CB", 0, 0, false, true),
+    /** 红冲(M1-7 已实现):按原单 doc_type 方向反向过账(red_flush_of 指原单),免负库存拦截 */
+    RED_FLUSH("红冲", "HC", 0, 0, true, false),
+    /** 成本调整(M1-7 已实现,附录C):未售部分插 qty=0/amount=Δ 的 ledger 调整流水;已售进利润表"成本调整"行(pl_line,M3 报表实装),不追溯 */
+    COST_ADJUST("成本调整", "CB", 0, 0, false, false),
     /** 资金调整(P1-7 钱盘差异唯一出口):不动库存,确认后生成 cash_flow,M3 */
     CASH_ADJUST("资金调整", "ZJ", 0, 0, false, true),
     /** 期初(上线向导一次性):仓库 +,天然豁免负库存 */
@@ -46,7 +47,7 @@ public enum DocType {
     private final int machineDirection;
     /** 是否默认豁免负库存拦截(期初/红冲) */
     private final boolean negExemptByDefault;
-    /** 过账逻辑是否延后实现(红冲/成本调整→M1-7,资金调整→M3) */
+    /** 过账逻辑是否延后实现(仅剩 资金调整→M3 生成 cash_flow;红冲/成本调整 M1-7 已实现) */
     private final boolean postingDeferred;
 
     DocType(String label, String prefix, int warehouseDirection, int machineDirection,

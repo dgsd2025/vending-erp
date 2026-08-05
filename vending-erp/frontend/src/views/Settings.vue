@@ -4,6 +4,7 @@ import MachineSlotTab from '@/components/basedata/MachineSlotTab.vue'
 import ProductPanel from '@/components/basedata/ProductPanel.vue'
 import SupplierTab from '@/components/basedata/SupplierTab.vue'
 import ParamsTab from '@/components/basedata/ParamsTab.vue'
+import PeriodLockSection from '@/components/doc/PeriodLockSection.vue'
 import { currentUserName } from '@/api/basedata'
 
 /**
@@ -45,6 +46,8 @@ const activeTab = ref('machine')
       </el-tab-pane>
       <el-tab-pane label="🎛 参数与阈值" name="params">
         <ParamsTab v-if="activeTab === 'params'" />
+        <!-- M1-7 锁账小节(P0-2):当前锁账线 / 锁账 / 解锁(老板+备注) / 上期调整一览 -->
+        <PeriodLockSection v-if="activeTab === 'params'" />
       </el-tab-pane>
     </el-tabs>
 

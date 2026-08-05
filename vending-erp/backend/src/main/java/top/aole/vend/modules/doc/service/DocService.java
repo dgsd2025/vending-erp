@@ -19,11 +19,13 @@ import top.aole.vend.modules.doc.dto.DocCreateReq;
 import top.aole.vend.modules.doc.dto.DocItemReq;
 import top.aole.vend.modules.doc.mapper.DocHeadMapper;
 import top.aole.vend.modules.doc.mapper.DocItemMapper;
+import top.aole.vend.modules.period.service.PeriodLockService;
 import top.aole.vend.modules.stock.service.StockService;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.stream.Collectors;
@@ -46,10 +48,13 @@ public class DocService {
     public static final String SOURCE_MANUAL = "手工";
     public static final String SOURCE_IMPORT = "导入";
 
+    private static final DateTimeFormatter PERIOD = DateTimeFormatter.ofPattern("yyyy-MM");
+
     private final DocHeadMapper docHeadMapper;
     private final DocItemMapper docItemMapper;
     private final OpLogService opLogService;
     private final StockService stockService;
+    private final PeriodLockService periodLockService;
     private final ApplicationEventPublisher eventPublisher;
 
     // ============================== 创建 / 修改 ==============================
@@ -93,6 +98,10 @@ public class DocService {
         if (head.getDocStatus() != DocStatus.DRAFT) {
             throw new BizException(String.format("单据[%s]当前状态为[%s],仅草稿态可修改;已确认单据只能红冲",
                     head.getDocNo(), head.getDocStatus().getLabel()));
+        }
+        // P0-2 防御性守卫:入账月已锁的单据禁改(草稿一般无 book_period,不影响正常改草稿)
+        if (head.getBookPeriod() != null) {
+            periodLockService.assertPeriodOperable(head.getBookPeriod(), "修改单据", false, null);
         }
         String before = JSONUtil.toJsonStr(head);
         head.setBizDate(req.getBizDate());
@@ -179,6 +188,10 @@ public class DocService {
         if (exempt || type.isNegExemptByDefault()) {
             head.setNegStockExempt(true);
         }
+        // P0-2 锁账×补导:确认即落入账月——业务月已锁 → 入当前月(旧报表永不重算,上期调整行承接)
+        String bizPeriod = head.getBizDate().format(PERIOD);
+        head.setBookPeriod(periodLockService.isLocked(bizPeriod)
+                ? YearMonth.now().format(PERIOD) : bizPeriod);
         head.setUpdateUser(userId);
         docHeadMapper.updateById(head);
         opLogService.recordJson(userId, prePending ? "确认(预挂单)" : "确认", "doc_head",
@@ -218,13 +231,25 @@ public class DocService {
     }
 
     /**
-     * 红冲入口(P0-1)——扩展点,连锁逻辑 M1-7 实现:
-     * 生成 doc_type=红冲 的反向单(red_flush_of=原单)→ 影响清单确认页 → 确认后反向过账
-     * (免负库存拦截)→ 原单流转"已红冲";已付款场景连锁 settle_bill 红字(M3)。
+     * 原单流转"已红冲"(P0-1,仅供 RedFlushService 在红冲事务内调用):
+     * 状态机守卫 CONFIRMED→RED_FLUSHED,非法状态直接抛。完整红冲连锁(下游检查/
+     * 影响清单/反向过账/PO 回冲/锁账守卫)见 {@link RedFlushService}。
      */
-    public Long redFlush(Long originDocId, Long userId, String reason) {
-        // TODO(M1-7):红冲连锁——本票只留通道(red_flush_of 字段 + 状态机 + 免拦截豁免)
-        throw new BizException("红冲连锁逻辑将在 M1-7 实现,当前仅保留通道(red_flush_of/状态机/豁免)");
+    @Transactional(rollbackFor = Exception.class)
+    public void markRedFlushed(Long docId, Long userId, String reason) {
+        DocHead head = mustGet(docId);
+        DocStateMachine.assertTransition(head.getDocType(), head.getDocStatus(), DocStatus.RED_FLUSHED);
+        String before = JSONUtil.toJsonStr(head);
+        head.setDocStatus(DocStatus.RED_FLUSHED);
+        head.setUpdateUser(userId);
+        docHeadMapper.updateById(head);
+        opLogService.recordJson(userId, "红冲(原因:" + reason + ")", "doc_head", docId,
+                before, JSONUtil.toJsonStr(head));
+    }
+
+    /** 单据号生成的公开口(成本调整单等由专项服务自组头/明细时用) */
+    public String nextDocNo(DocType type, LocalDate bizDate) {
+        return generateDocNo(type, bizDate);
     }
 
     // ============================== 查询 ==============================
