@@ -179,6 +179,12 @@ public class ImportService {
 
     // ============================== 第②步:确认入账 ==============================
 
+    /**
+     * P1-1:确认入账整体包事务——中途崩溃/异常时批次行、明细、单据、流水一起回滚,
+     * 不再留下永远卡在「处理中」的僵尸批次(归档文件为文件系统操作不随事务回滚,
+     * 失败后留下的孤儿归档目录无副作用,重新上传即可)。
+     */
+    @Transactional(rollbackFor = Exception.class)
     public CommitResp confirm(String token, String operator) {
         PendingUpload pending = pendingUploads.remove(token);
         if (pending == null) {
@@ -194,15 +200,18 @@ public class ImportService {
         ImportBatch batch = new ImportBatch();
         batch.setBatchNo("IMP-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
                 + "-" + IdUtil.fastSimpleUUID().substring(0, 4).toUpperCase());
-        batch.setFileName(pending.getFileName());
+        // P0-B:原始文件名只存 DB 字段,且 FileUtil.getName 兜底剥掉客户端可能带的路径
+        batch.setFileName(FileUtil.getName(pending.getFileName()));
         batch.setFileType(pending.getFileType());
         batch.setRowTotal(sheet.getRows().size());
         batch.setBatchStatus(ImportBatch.STATUS_PROCESSING);
         batch.setCreateUser(IMPORT_USER);
         batchMapper.insert(batch);
 
-        // 原始文件归档:storage/imports/{batchId}/{原文件名}
-        File archive = new File(storageDir, batch.getId() + "/" + pending.getFileName());
+        // P0-B 路径穿越修复:归档名一律用服务端生成的 batchNo+固定后缀,
+        // 绝不拼接客户端传来的原始文件名(../../xx 之类会写出存储目录并覆盖任意文件)。
+        // 原始文件名仅存 import_batch.file_name 字段供展示。
+        File archive = new File(storageDir, batch.getId() + "/" + batch.getBatchNo() + ".xlsx");
         FileUtil.move(tmp, archive, true);
         batch.setArchivePath(archive.getAbsolutePath());
 
@@ -432,7 +441,6 @@ public class ImportService {
                 req.setDocType(forward ? DocType.TRANSFER_OUT : DocType.RETURN_BACK);
                 req.setBizDate(first.time.toLocalDate());
                 req.setMachineId(first.machineId);
-                req.setDocSource(DocService.SOURCE_IMPORT);
                 req.setImportBatchId(batch.getId());
                 req.setRemark("后台补货记录导入 " + first.time.format(DT));
                 List<DocItemReq> items = new ArrayList<>();
@@ -446,7 +454,8 @@ public class ImportService {
                     items.add(item);
                 }
                 req.setItems(items);
-                Long docId = docService.createDoc(req, IMPORT_USER);
+                // P1-5:导入来源由服务端受信通道设置(公开 createDoc 强制手工)
+                Long docId = docService.createDocWithSource(req, IMPORT_USER, DocService.SOURCE_IMPORT);
                 docService.submit(docId, IMPORT_USER);
                 // 确认:exempt=true 负库存豁免(导入通道特权,豁免放行后亮"待补录采购"红灯);
                 // bizTime=补货记录真实时间戳(机器库存增量推算靠它,绝不能用 00:00)

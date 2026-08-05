@@ -15,9 +15,11 @@ import top.aole.vend.modules.doc.dto.CostAdjustReq;
 import top.aole.vend.modules.doc.mapper.DocHeadMapper;
 import top.aole.vend.modules.doc.mapper.DocItemMapper;
 import top.aole.vend.modules.doc.mapper.DocQueryMapper;
+import top.aole.vend.modules.period.service.PeriodLockService;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -38,11 +40,14 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class CostAdjustService {
 
+    private static final DateTimeFormatter PERIOD = DateTimeFormatter.ofPattern("yyyy-MM");
+
     private final DocService docService;
     private final DocHeadMapper docHeadMapper;
     private final DocItemMapper docItemMapper;
     private final DocQueryMapper docQueryMapper;
     private final OpLogService opLogService;
+    private final PeriodLockService periodLockService;
 
     // ============================== 预览 ==============================
 
@@ -108,11 +113,30 @@ public class CostAdjustService {
 
     // ============================== 执行 ==============================
 
-    /** 生成成本调整单并确认过账(未售 Δ 落 ledger;已售 Δ 落备注+pl_line) */
+    /** 旧签名兼容(无角色头场景):bossOverride=true 时会因角色缺失被拒 */
     @Transactional(rollbackFor = Exception.class)
     public Long execute(Long originDocId, CostAdjustReq req, Long userId) {
+        return execute(originDocId, req, userId, null);
+    }
+
+    /**
+     * 生成成本调整单并确认过账(未售 Δ 落 ledger;已售 Δ 落备注+pl_line)。
+     *
+     * 锁账守卫(七律审计,与红冲同一把尺子):原单入账月已锁 → 拒绝;
+     * 老板越权(bossOverride + X-User-Role 老板角色 + 强制备注)放行,调整单本身落当月。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public Long execute(Long originDocId, CostAdjustReq req, Long userId, String role) {
         Preview p = preview(originDocId, req);
         DocHead origin = mustGetAdjustable(originDocId);
+
+        // P0-2 锁账守卫:锁账线之前的原单禁成本调整;老板越权先验角色头(P1-2 同逻辑)
+        String bookPeriod = origin.getBookPeriod() != null
+                ? origin.getBookPeriod() : origin.getBizDate().format(PERIOD);
+        if (req.isBossOverride()) {
+            periodLockService.assertBossRole(role, "锁账期成本调整越权");
+        }
+        periodLockService.assertPeriodOperable(bookPeriod, "成本调整", req.isBossOverride(), req.getRemark());
 
         DocHead head = new DocHead();
         head.setDocNo(docService.nextDocNo(DocType.COST_ADJUST, LocalDate.now()));

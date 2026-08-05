@@ -104,7 +104,11 @@ class Scenario14LockedPeriodBackfillTest extends RegressionSupport {
                 () -> periodLockService.assertPeriodOperable(month(1), "红冲", true, " "),
                 "越权必须强制备注");
 
-        Long redId = redFlushService.execute(originId, OP, "老板拍板:上月这单确实录错", true);
+        assertThrows(BizException.class,
+                () -> redFlushService.execute(originId, OP, "老板拍板:上月这单确实录错", true),
+                "P1-2:bossOverride 不带老板角色头一律拒绝");
+        Long redId = redFlushService.execute(originId, OP, "老板拍板:上月这单确实录错", true,
+                top.aole.vend.modules.period.service.PeriodLockService.ROLE_BOSS);
         assertEquals(DocStatus.RED_FLUSHED, docHeadMapper.selectById(originId).getDocStatus());
         DocHead red = docHeadMapper.selectById(redId);
         assertEquals(month(0), red.getBookPeriod(), "锁账期红冲的反向单入当月(不动旧报表)");

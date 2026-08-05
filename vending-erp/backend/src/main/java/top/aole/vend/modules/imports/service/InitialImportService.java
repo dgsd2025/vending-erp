@@ -367,7 +367,6 @@ public class InitialImportService {
             req.setDocType(DocType.OPENING);
             req.setBizDate(first.date);
             req.setSupplierId(supplier == null ? null : supplier.getId());
-            req.setDocSource(DocService.SOURCE_IMPORT);
             req.setImportBatchId(batch.getId());
             req.setRemark("期初历史采购 " + first.date + " " + first.supplierName);
             List<DocItemReq> itemReqs = new ArrayList<>();
@@ -384,7 +383,8 @@ public class InitialImportService {
                 totalAmt = totalAmt.add(r.amount);
             }
             req.setItems(itemReqs);
-            Long docId = docService.createDoc(req, ImportService.IMPORT_USER);
+            // P1-5:导入来源由服务端受信通道设置(公开 createDoc 强制手工)
+            Long docId = docService.createDocWithSource(req, ImportService.IMPORT_USER, DocService.SOURCE_IMPORT);
             docService.submit(docId, ImportService.IMPORT_USER);
             // 期初单确认过账:仓库+,biz_time=入库日 00:00(先于当日销售,对齐冲刺0事件排序)
             docService.confirm(docId, ImportService.IMPORT_USER, true, first.date.atStartOfDay());
@@ -760,13 +760,15 @@ public class InitialImportService {
         ImportBatch batch = new ImportBatch();
         batch.setBatchNo("IMP-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
                 + "-" + IdUtil.fastSimpleUUID().substring(0, 4).toUpperCase());
-        batch.setFileName(pending.getFileName());
+        // P0-B:原始文件名只存 DB 字段(FileUtil.getName 剥路径兜底)
+        batch.setFileName(FileUtil.getName(pending.getFileName()));
         batch.setFileType(fileType);
         batch.setRowTotal(rowTotal);
         batch.setBatchStatus(ImportBatch.STATUS_PROCESSING);
         batch.setCreateUser(ImportService.IMPORT_USER);
         batchMapper.insert(batch);
-        File archive = new File(storageDir, batch.getId() + "/" + pending.getFileName());
+        // P0-B 路径穿越修复:归档名=服务端 batchNo+固定后缀,不拼客户端原始文件名
+        File archive = new File(storageDir, batch.getId() + "/" + batch.getBatchNo() + ".xlsx");
         FileUtil.move(new File(pending.getTmpPath()), archive, true);
         batch.setArchivePath(archive.getAbsolutePath());
         return batch;

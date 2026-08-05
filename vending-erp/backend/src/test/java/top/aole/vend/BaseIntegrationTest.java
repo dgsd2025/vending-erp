@@ -39,13 +39,12 @@ public abstract class BaseIntegrationTest {
     @Autowired
     protected SaleRecordMapper saleRecordMapper;
 
-    /** 组一张单据入参 */
+    /** 组一张单据入参(P1-5 后 DTO 已无 docSource 字段;source 参数由 confirmedDoc 走受信通道传入) */
     protected DocCreateReq req(DocType type, Long machineId, String source, LocalDate bizDate,
                                Object[]... items) {
         DocCreateReq r = new DocCreateReq();
         r.setDocType(type);
         r.setMachineId(machineId);
-        r.setDocSource(source);
         r.setBizDate(bizDate);
         List<DocItemReq> list = new ArrayList<>();
         for (Object[] it : items) {
@@ -62,7 +61,8 @@ public abstract class BaseIntegrationTest {
     /** 建单→提交→确认,返回单据 ID */
     protected Long confirmedDoc(DocType type, Long machineId, String source, LocalDate bizDate,
                                 boolean exempt, LocalDateTime bizTime, Object[]... items) {
-        Long id = docService.createDoc(req(type, machineId, source, bizDate, items), OP);
+        // 走受信通道显式指定来源(P1-5:公开 createDoc 已强制手工,测试造"导入"单需走这里)
+        Long id = docService.createDocWithSource(req(type, machineId, source, bizDate, items), OP, source);
         docService.submit(id, OP);
         docService.confirm(id, OP, exempt, bizTime);
         return id;

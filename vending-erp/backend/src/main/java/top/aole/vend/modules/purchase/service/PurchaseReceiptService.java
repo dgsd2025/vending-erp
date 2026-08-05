@@ -78,7 +78,6 @@ public class PurchaseReceiptService {
         req.setBizDate(bizDate == null ? LocalDate.now() : bizDate);
         req.setSupplierId(po.getSupplierId());
         req.setPurchaseOrderId(poId);
-        req.setDocSource(DocService.SOURCE_MANUAL);
         req.setRemark("从订货单 " + po.getPoNo() + " 生成");
         req.setItems(items);
         return docService.createDoc(req, userId);
@@ -179,7 +178,6 @@ public class PurchaseReceiptService {
         docReq.setBizDate(req.getBizDate());
         docReq.setSupplierId(req.getSupplierId());
         docReq.setPurchaseOrderId(req.getPurchaseOrderId());
-        docReq.setDocSource(DocService.SOURCE_MANUAL);
         docReq.setRemark(req.getRemark());
         docReq.setItems(req.getItems().stream().map(i -> {
             DocItemReq item = new DocItemReq();

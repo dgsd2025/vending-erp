@@ -16,12 +16,15 @@ import top.aole.vend.modules.doc.mapper.DocHeadMapper;
 import top.aole.vend.modules.doc.mapper.DocItemMapper;
 import top.aole.vend.modules.doc.service.CostAdjustService;
 import top.aole.vend.modules.doc.service.DocService;
+import top.aole.vend.modules.period.service.PeriodLockService;
 import top.aole.vend.modules.stock.domain.entity.StockLedger;
 import top.aole.vend.modules.stock.mapper.StockLedgerMapper;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.YearMonth;
+import java.time.format.DateTimeFormatter;
 import java.util.Collections;
 import java.util.List;
 import java.util.Map;
@@ -40,6 +43,8 @@ class CostAdjustTest extends BaseIntegrationTest {
 
     @Autowired
     private CostAdjustService costAdjustService;
+    @Autowired
+    private PeriodLockService periodLockService;
     @Autowired
     private DocHeadMapper docHeadMapper;
     @Autowired
@@ -104,6 +109,44 @@ class CostAdjustTest extends BaseIntegrationTest {
         List<StockLedger> rows = ledgerMapper.selectList(
                 new LambdaQueryWrapper<StockLedger>().eq(StockLedger::getDocId, adjustId));
         assertEquals(0, rows.get(0).getAmount().compareTo(new BigDecimal("-5")), "10×(3.0−3.5)=−5 调存货");
+    }
+
+    @Test
+    @DisplayName("七律审计:锁账期原单成本调整被拒;bossOverride 需老板角色头+备注才放行(与红冲同一把尺子)")
+    void lockedPeriodCostAdjustNeedsBossOverrideWithRole() {
+        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM");
+        String lastMonth = YearMonth.now().minusMonths(1).format(fmt);
+        // 上月确认一张采购入库(锁之前确认 → book_period=上月)
+        Long originId = confirmedDoc(DocType.PURCHASE_IN, null, DocService.SOURCE_MANUAL,
+                YearMonth.now().minusMonths(1).atDay(10), false, null, new Object[]{P, "10", "3.5"});
+        assertEquals(lastMonth, docHeadMapper.selectById(originId).getBookPeriod());
+        periodLockService.lock(lastMonth, OP, "月报已出");
+
+        // ① 普通调用 → 拒绝(带锁账提示)
+        BizException e1 = assertThrows(BizException.class,
+                () -> costAdjustService.execute(originId, reqOf(itemIdOf(originId), "4.0"), OP));
+        assertTrue(e1.getMessage().contains("已锁账"), e1.getMessage());
+
+        // ② bossOverride=true 但角色头不是老板 → 拒绝(P1-2 同逻辑:不许光传布尔就放行)
+        CostAdjustReq boss = reqOf(itemIdOf(originId), "4.0");
+        boss.setBossOverride(true);
+        boss.setRemark("老板拍板:上月进价录错");
+        assertThrows(BizException.class,
+                () -> costAdjustService.execute(originId, boss, OP, "录单员"),
+                "非老板角色不可越权");
+
+        // ③ bossOverride 但备注为空 → 拒绝(越权强制备注)
+        CostAdjustReq noRemark = reqOf(itemIdOf(originId), "4.0");
+        noRemark.setBossOverride(true);
+        assertThrows(BizException.class,
+                () -> costAdjustService.execute(originId, noRemark, OP, PeriodLockService.ROLE_BOSS),
+                "越权必须强制备注");
+
+        // ④ 老板角色 + bossOverride + 备注 → 放行;调整单落当月(旧报表永不重算)
+        Long adjustId = costAdjustService.execute(originId, boss, OP, PeriodLockService.ROLE_BOSS);
+        DocHead adjust = docHeadMapper.selectById(adjustId);
+        assertEquals(DocStatus.CONFIRMED, adjust.getDocStatus());
+        assertEquals(YearMonth.now().format(fmt), adjust.getBookPeriod(), "锁账期成本调整单入当月");
     }
 
     @Test

@@ -145,12 +145,21 @@ public class RedFlushService {
 
     // ============================== 执行 ==============================
 
+    /** 旧签名兼容(无角色头场景):bossOverride=true 时会因角色缺失被拒(P1-2) */
+    @Transactional(rollbackFor = Exception.class)
+    public Long execute(Long originDocId, Long userId, String reason, boolean bossOverride) {
+        return execute(originDocId, userId, reason, bossOverride, null);
+    }
+
     /**
      * 执行整单红冲:前端必须先展示 preview 影响清单、用户确认后才调本方法。
      * 服务端再跑一遍全部检查(不信任前端),生成反向单 → 确认过账(免拦截)→ 原单已红冲。
+     *
+     * @param role 操作者角色(X-User-Role 头占位,盲审 P1-2):bossOverride=true 必须是老板角色,
+     *             与解锁同一把尺子(PeriodLockService.assertBossRole),SSO 接入时统一替换。
      */
     @Transactional(rollbackFor = Exception.class)
-    public Long execute(Long originDocId, Long userId, String reason, boolean bossOverride) {
+    public Long execute(Long originDocId, Long userId, String reason, boolean bossOverride, String role) {
         if (reason == null || reason.trim().isEmpty()) {
             throw new BizException("红冲必须填写原因(影响清单确认页备注)");
         }
@@ -158,7 +167,11 @@ public class RedFlushService {
         if (!p.isExecutable()) {
             throw new BizException("红冲被拦截:" + String.join(";", p.getBlockers()));
         }
-        // P0-2:锁账线之前的单据禁红冲;老板越权(占位)+强制备注放行
+        // P1-2:老板越权先验角色头(与解锁同逻辑),不许光传个 bossOverride=true 就放行
+        if (bossOverride) {
+            periodLockService.assertBossRole(role, "锁账期红冲越权");
+        }
+        // P0-2:锁账线之前的单据禁红冲;老板越权(角色已验)+强制备注放行
         periodLockService.assertPeriodOperable(p.getBookPeriod(), "红冲", bossOverride, reason);
 
         DocHead origin = mustGet(originDocId);
@@ -169,8 +182,7 @@ public class RedFlushService {
         req.setMachineId(origin.getMachineId());
         req.setSupplierId(origin.getSupplierId());
         req.setPurchaseOrderId(origin.getPurchaseOrderId());
-        req.setDocSource(DocService.SOURCE_MANUAL);
-        req.setRedFlushOf(originDocId);
+        req.setRedFlushOf(originDocId); // docSource 由 createDoc 服务端裁决=手工(P1-5)
         req.setRemark(String.format("红冲原单[%s]%s。原因:%s",
                 origin.getDocNo(), p.isLockedPeriod() ? "(锁账期老板越权)" : "", reason.trim()));
         List<DocItemReq> items = new ArrayList<>();

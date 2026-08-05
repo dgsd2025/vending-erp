@@ -23,8 +23,8 @@ public class DocCreateReq {
     private Long machineId;
     private Long supplierId;
     private Long purchaseOrderId;
-    /** 手工/导入/系统生成,默认手工 */
-    private String docSource;
+    // 盲审 P1-5:docSource 字段已从对外 DTO 移除——单据来源由服务端裁决
+    // (公开通道一律"手工";"导入"仅限导入服务走 DocService.createDocWithSource 内部设置)
     private Long importBatchId;
     /** 红冲原单 ID(doc_type=红冲时必填,连锁逻辑 M1-7) */
     private Long redFlushOf;

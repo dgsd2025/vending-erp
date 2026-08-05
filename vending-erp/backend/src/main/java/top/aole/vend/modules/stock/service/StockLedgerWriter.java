@@ -30,7 +30,17 @@ class StockLedgerWriter {
      * @param signedQty 带方向数量(+入/-出)
      */
     void postWarehouse(DocHead head, DocItem item, BigDecimal signedQty, LocalDateTime bizTime) {
-        BigDecimal current = nvl(stockLedgerMapper.sumWarehouse(item.getProductId()));
+        // P1-3 并发透支修复:非豁免出库先锁该 SKU 商品行(FOR UPDATE)把"查余额+写流水"
+        // 串行化,再用**当前读**(SUM ... FOR UPDATE)取最新已提交余额——快照读等到锁后
+        // 读到的还是旧余额,拦截照样被穿透。P0-A 条件更新只防同一张单双过账,
+        // 防不了两张不同单并发透支同一 SKU。豁免单(导入/红冲/期初)允许负库存,无需排队。
+        BigDecimal current;
+        if (signedQty.signum() < 0 && !Boolean.TRUE.equals(head.getNegStockExempt())) {
+            stockLedgerMapper.lockProductRow(item.getProductId());
+            current = nvl(stockLedgerMapper.sumWarehouseCurrent(item.getProductId()));
+        } else {
+            current = nvl(stockLedgerMapper.sumWarehouse(item.getProductId()));
+        }
         BigDecimal after = current.add(signedQty);
         if (after.compareTo(BigDecimal.ZERO) < 0 && !Boolean.TRUE.equals(head.getNegStockExempt())) {
             throw new BizException(String.format(

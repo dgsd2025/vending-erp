@@ -14,6 +14,7 @@ import top.aole.vend.modules.doc.domain.enums.DocStatus;
 import top.aole.vend.modules.doc.domain.enums.DocType;
 import top.aole.vend.modules.doc.mapper.DocHeadMapper;
 import top.aole.vend.modules.doc.mapper.DocItemMapper;
+import top.aole.vend.modules.doc.service.DocStatusGuard;
 import top.aole.vend.modules.stock.domain.entity.MachineStockSnapshot;
 import top.aole.vend.modules.stock.mapper.MachineStockSnapshotMapper;
 import top.aole.vend.modules.stock.mapper.SaleRecordMapper;
@@ -48,6 +49,7 @@ public class StockService {
     private final SaleRecordMapper saleRecordMapper;
     private final DocHeadMapper docHeadMapper;
     private final DocItemMapper docItemMapper;
+    private final DocStatusGuard docStatusGuard;
     private final OpLogService opLogService;
     private final StockLedgerWriter ledgerWriter;
 
@@ -192,7 +194,8 @@ public class StockService {
             pending.setDocStatus(DocStatus.VOID);
             pending.setMatchedDocId(importDocId);
             pending.setUpdateUser(userId);
-            docHeadMapper.updateById(pending);
+            // P0-A 条件更新:并发冲抵/转正同一张预挂单只允许一方成功(防仓库侧双重释放)
+            docStatusGuard.updateGuarded(pending, DocStatus.PRE_PENDING);
             // 释放预挂单锁定的仓库侧:反向 + 回去(流水仍挂在预挂单 doc_id 上,可追溯)
             for (DocItem item : pendingItems) {
                 ledgerWriter.postWarehouse(pending, item, item.getQty(),

@@ -53,6 +53,7 @@ public class DocService {
 
     private final DocHeadMapper docHeadMapper;
     private final DocItemMapper docItemMapper;
+    private final DocStatusGuard docStatusGuard;
     private final OpLogService opLogService;
     private final ProductService productService;
     private final StockService stockService;
@@ -61,9 +62,23 @@ public class DocService {
 
     // ============================== 创建 / 修改 ==============================
 
-    /** 创建单据(草稿态) */
+    /**
+     * 创建单据(草稿态)——公开建单通道,单据来源由服务端裁决一律=手工(盲审 P1-5)。
+     * "导入"来源自带免预挂单/免碰撞检查/可豁免负库存三大特权,绝不许由客户端入参指定;
+     * 导入服务请走 {@link #createDocWithSource}。
+     */
     @Transactional(rollbackFor = Exception.class)
     public Long createDoc(DocCreateReq req, Long userId) {
+        return createDocWithSource(req, userId, SOURCE_MANUAL);
+    }
+
+    /**
+     * 受信建单通道(仅限 ImportService / InitialImportService 等服务端内部调用):
+     * 显式指定单据来源。任何 Controller 一律走 {@link #createDoc}(强制手工),
+     * 防止 HTTP 入参伪造"导入"来源绕穿 P0-4 转移单唯一生产者防线。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public Long createDocWithSource(DocCreateReq req, Long userId, String docSource) {
         if (req.getDocType().isTransfer() && req.getMachineId() == null) {
             throw new BizException("转移类单据(" + req.getDocType().getLabel() + ")必须关联机器");
         }
@@ -83,7 +98,7 @@ public class DocService {
         head.setMachineId(req.getMachineId());
         head.setSupplierId(req.getSupplierId());
         head.setPurchaseOrderId(req.getPurchaseOrderId());
-        head.setDocSource(req.getDocSource() == null ? SOURCE_MANUAL : req.getDocSource());
+        head.setDocSource(docSource == null ? SOURCE_MANUAL : docSource);
         head.setImportBatchId(req.getImportBatchId());
         head.setRedFlushOf(req.getRedFlushOf());
         head.setNegStockExempt(req.getDocType().isNegExemptByDefault());
@@ -134,10 +149,21 @@ public class DocService {
         transition(mustGet(docId), DocStatus.PENDING_CONFIRM, userId, "提交");
     }
 
-    /** 作废:仅草稿/待确认可作废(已过账单据只能红冲) */
+    /**
+     * 作废:仅草稿/待确认可作废(已过账单据只能红冲)。
+     * 盲审 P1-4:预挂单禁止走本方法直接作废——预挂单确认时仓库侧已锁定库存,
+     * 直接作废会让货永远扣着(账实分离)。预挂单的两条合法出路:
+     * ① 导入冲抵(StockService.matchPendingTransfer,含仓库侧反向释放);② 超48h转正后红冲。
+     */
     @Transactional(rollbackFor = Exception.class)
     public void voidDoc(Long docId, Long userId) {
-        transition(mustGet(docId), DocStatus.VOID, userId, "作废");
+        DocHead head = mustGet(docId);
+        if (head.getDocStatus() == DocStatus.PRE_PENDING) {
+            throw new BizException(String.format(
+                    "预挂单[%s]不允许直接作废(仓库侧已锁定库存,直接作废会造成账实分离):" +
+                            "请等导入补货记录自动冲抵,或超48h转正后走红冲释放(P1-4)", head.getDocNo()));
+        }
+        transition(head, DocStatus.VOID, userId, "作废");
     }
 
     /** 完成:已确认/已结算 → 已完成 */
@@ -186,7 +212,8 @@ public class DocService {
         // P0-4:手工出库上架单确认后进"预挂单"(只锁仓库侧);其余进"已确认"
         boolean prePending = type == DocType.TRANSFER_OUT && SOURCE_MANUAL.equals(head.getDocSource());
         DocStatus target = prePending ? DocStatus.PRE_PENDING : DocStatus.CONFIRMED;
-        DocStateMachine.assertTransition(type, head.getDocStatus(), target);
+        DocStatus from = head.getDocStatus();
+        DocStateMachine.assertTransition(type, from, target);
 
         String before = JSONUtil.toJsonStr(head);
         head.setDocStatus(target);
@@ -200,7 +227,8 @@ public class DocService {
         head.setBookPeriod(periodLockService.isLocked(bizPeriod)
                 ? YearMonth.now().format(PERIOD) : bizPeriod);
         head.setUpdateUser(userId);
-        docHeadMapper.updateById(head);
+        // P0-A 并发防线:条件更新(WHERE doc_status=旧),并发第二人抛"已被他人处理"整体回滚
+        docStatusGuard.updateGuarded(head, from);
         opLogService.recordJson(userId, prePending ? "确认(预挂单)" : "确认", "doc_head",
                 head.getId(), before, JSONUtil.toJsonStr(head));
 
@@ -230,7 +258,7 @@ public class DocService {
         String before = JSONUtil.toJsonStr(head);
         head.setDocStatus(DocStatus.CONFIRMED);
         head.setUpdateUser(userId);
-        docHeadMapper.updateById(head);
+        docStatusGuard.updateGuarded(head, DocStatus.PRE_PENDING); // P0-A 条件更新
         opLogService.recordJson(userId, "预挂单转正", "doc_head", docId, before, JSONUtil.toJsonStr(head));
         eventPublisher.publishEvent(new DocConfirmedEvent(head, itemsOf(docId),
                 DocConfirmedEvent.PostingPhase.MACHINE_ONLY,
@@ -245,11 +273,12 @@ public class DocService {
     @Transactional(rollbackFor = Exception.class)
     public void markRedFlushed(Long docId, Long userId, String reason) {
         DocHead head = mustGet(docId);
-        DocStateMachine.assertTransition(head.getDocType(), head.getDocStatus(), DocStatus.RED_FLUSHED);
+        DocStatus from = head.getDocStatus();
+        DocStateMachine.assertTransition(head.getDocType(), from, DocStatus.RED_FLUSHED);
         String before = JSONUtil.toJsonStr(head);
         head.setDocStatus(DocStatus.RED_FLUSHED);
         head.setUpdateUser(userId);
-        docHeadMapper.updateById(head);
+        docStatusGuard.updateGuarded(head, from); // P0-A:并发红冲同一张单只允许一单成功
         opLogService.recordJson(userId, "红冲(原因:" + reason + ")", "doc_head", docId,
                 before, JSONUtil.toJsonStr(head));
     }
@@ -282,13 +311,14 @@ public class DocService {
 
     // ============================== 内部 ==============================
 
-    /** 通用状态流转(状态机校验 + op_log) */
+    /** 通用状态流转(状态机校验 + P0-A 条件更新 + op_log) */
     private void transition(DocHead head, DocStatus target, Long userId, String action) {
-        DocStateMachine.assertTransition(head.getDocType(), head.getDocStatus(), target);
+        DocStatus from = head.getDocStatus();
+        DocStateMachine.assertTransition(head.getDocType(), from, target);
         String before = JSONUtil.toJsonStr(head);
         head.setDocStatus(target);
         head.setUpdateUser(userId);
-        docHeadMapper.updateById(head);
+        docStatusGuard.updateGuarded(head, from);
         opLogService.recordJson(userId, action, "doc_head", head.getId(), before, JSONUtil.toJsonStr(head));
     }
 

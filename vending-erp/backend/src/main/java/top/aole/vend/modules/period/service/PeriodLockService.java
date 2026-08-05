@@ -103,10 +103,7 @@ public class PeriodLockService {
     @Transactional(rollbackFor = Exception.class)
     public void unlock(String period, Long userId, String note, String role) {
         assertPeriodFormat(period);
-        if (!ROLE_BOSS.equals(role)) {
-            throw new BizException("解锁限老板角色(当前角色:" + StrUtil.blankToDefault(role, "未知") + ")。"
-                    + "角色占位实现,SSO/user_role 接入后按真实角色校验");
-        }
+        assertBossRole(role, "解锁");
         if (StrUtil.isBlank(note)) {
             throw new BizException("解锁必须填写备注(为什么要解锁、解锁后要改什么)");
         }
@@ -128,7 +125,19 @@ public class PeriodLockService {
         opLogService.recordJson(userId, "解锁(备注:" + note + ")", "period_lock", lock.getId(), before, null);
     }
 
-    // ============================== 规则守卫(供 doc/红冲调用) ==============================
+    // ============================== 规则守卫(供 doc/红冲/成本调整调用) ==============================
+
+    /**
+     * 老板角色校验(占位,盲审 P1-2):所有"老板特权"入口统一走这里——
+     * 解锁 / 锁账期红冲 bossOverride / 锁账期成本调整 bossOverride。
+     * 角色经 X-User-Role 头占位传入,SSO/user_role 接入后只需替换本方法实现。
+     */
+    public void assertBossRole(String role, String action) {
+        if (!ROLE_BOSS.equals(role)) {
+            throw new BizException(action + "限老板角色(当前角色:" + StrUtil.blankToDefault(role, "未知") + ")。"
+                    + "角色占位实现,SSO/user_role 接入后按真实角色校验");
+        }
+    }
 
     /**
      * 锁账守卫:目标期间已锁 → 抛异常;老板角色 + 非空备注可越权(占位)。

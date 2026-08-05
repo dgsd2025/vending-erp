@@ -92,6 +92,44 @@ class DocStateMachineTest extends BaseIntegrationTest {
     }
 
     @Test
+    @DisplayName("P1-4:预挂单禁止直接作废(仓库侧已锁定,直接作废=账实分离);冲抵/转正才是合法出路")
+    void prePendingCannotBeVoided() {
+        // 垫库存 10 → 手工出库上架 4,确认后=预挂单(仓库侧已扣 4)
+        Long poId = docService.createDoc(req(DocType.PURCHASE_IN, null, DocService.SOURCE_MANUAL,
+                LocalDate.now(), new Object[]{104L, "10", "3.0"}), OP);
+        docService.submit(poId, OP);
+        docService.confirm(poId, OP, false);
+        Long id = docService.createDoc(req(DocType.TRANSFER_OUT, 990901L, DocService.SOURCE_MANUAL,
+                LocalDate.now(), new Object[]{104L, "4", "3.0"}), OP);
+        docService.submit(id, OP);
+        docService.confirm(id, OP, false);
+        assertEquals(DocStatus.PRE_PENDING, docService.getDoc(id).getHead().getDocStatus());
+        assertEquals(0, stockService.getWarehouseStock(104L).compareTo(new java.math.BigDecimal("6")));
+
+        BizException e = assertThrows(BizException.class, () -> docService.voidDoc(id, OP));
+        assertTrue(e.getMessage().contains("预挂单") && e.getMessage().contains("不允许直接作废"),
+                e.getMessage());
+        // 拒绝后状态不变、仓库锁定不变(不许出现"单作废了货还扣着"的账实分离)
+        assertEquals(DocStatus.PRE_PENDING, docService.getDoc(id).getHead().getDocStatus());
+        assertEquals(0, stockService.getWarehouseStock(104L).compareTo(new java.math.BigDecimal("6")));
+    }
+
+    @Test
+    @DisplayName("P1-5:docSource 服务端裁决——公开建单一律手工;导入来源仅受信通道可设")
+    void docSourceDecidedByServer() {
+        // 公开通道:DTO 已无 docSource 字段,建出的单一律=手工(伪造导入来源无门)
+        Long id = docService.createDoc(req(DocType.PURCHASE_IN, null, DocService.SOURCE_MANUAL,
+                LocalDate.now(), new Object[]{105L, "1", "2.0"}), OP);
+        assertEquals(DocService.SOURCE_MANUAL, docService.getDoc(id).getHead().getDocSource(),
+                "公开建单通道来源必须由服务端强制=手工");
+
+        // 受信通道(仅导入服务内部调用):显式指定导入来源
+        Long trusted = docService.createDocWithSource(req(DocType.PURCHASE_IN, null, null,
+                LocalDate.now(), new Object[]{105L, "1", "2.0"}), OP, DocService.SOURCE_IMPORT);
+        assertEquals(DocService.SOURCE_IMPORT, docService.getDoc(trusted).getHead().getDocSource());
+    }
+
+    @Test
     @DisplayName("单据不许删:DocService 全部公开方法里不存在 delete/remove")
     void noDeleteApi() {
         for (java.lang.reflect.Method m : DocService.class.getDeclaredMethods()) {

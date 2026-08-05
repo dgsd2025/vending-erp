@@ -20,6 +20,23 @@ public interface StockLedgerMapper extends BaseMapper<StockLedger> {
             "WHERE product_id=#{productId} AND location_type='仓库' AND is_deleted=0")
     BigDecimal sumWarehouse(@Param("productId") Long productId);
 
+    /**
+     * 盲审 P1-3:负库存拦截前对该 SKU 的商品行加行锁(SELECT ... FOR UPDATE),
+     * 把"查余额 + 写流水"串行化——两张不同单据并发出库时,后到者等前者提交后
+     * 才能读到最新余额,拦截不再被并发穿透。锁随本事务提交/回滚自动释放。
+     */
+    @Select("SELECT id FROM yc_vend_product WHERE id=#{productId} FOR UPDATE")
+    Long lockProductRow(@Param("productId") Long productId);
+
+    /**
+     * 盲审 P1-3 配套:余额的**当前读**版本(FOR UPDATE)。
+     * REPEATABLE READ 下普通 SELECT 是事务快照读——排队等到锁后读到的仍是旧余额,
+     * 拦截照样被穿透;locking read 永远读最新已提交数据,配合 lockProductRow 才闭环。
+     */
+    @Select("SELECT COALESCE(SUM(change_qty),0) FROM yc_vend_stock_ledger " +
+            "WHERE product_id=#{productId} AND location_type='仓库' AND is_deleted=0 FOR UPDATE")
+    BigDecimal sumWarehouseCurrent(@Param("productId") Long productId);
+
     /** 仓库库存批量版:返回 product_id → Σ流水 */
     @Select("<script>" +
             "SELECT product_id AS productId, COALESCE(SUM(change_qty),0) AS qty " +

@@ -52,10 +52,13 @@ public class DocController {
         return R.ok(redFlushService.preview(id));
     }
 
-    @ApiOperation("执行整单红冲:生成等额反向单(免负库存拦截)→原单已红冲;锁账期需 bossOverride+备注")
+    @ApiOperation("执行整单红冲:生成等额反向单(免负库存拦截)→原单已红冲;锁账期需 bossOverride+老板角色头+备注")
     @PostMapping("/{id}/red-flush")
-    public R<Long> redFlush(@PathVariable Long id, @Valid @RequestBody RedFlushReq req) {
-        return R.ok(redFlushService.execute(id, UID, req.getReason(), req.isBossOverride()));
+    public R<Long> redFlush(@PathVariable Long id, @Valid @RequestBody RedFlushReq req,
+                            @RequestHeader(value = "X-User-Role", required = false) String role) {
+        // P1-2:老板越权与解锁同一把尺子——读 X-User-Role 占位角色头交 service 校验(SSO 后统一替换)
+        return R.ok(redFlushService.execute(id, UID, req.getReason(), req.isBossOverride(),
+                top.aole.vend.modules.basedata.interfaces.Operators.resolve(role)));
     }
 
     // ============================== 成本调整(P0-1 单价错) ==============================
@@ -67,9 +70,11 @@ public class DocController {
         return R.ok(costAdjustService.preview(id, req));
     }
 
-    @ApiOperation("执行成本调整:生成 doc_type=成本调整 单并确认过账")
+    @ApiOperation("执行成本调整:生成 doc_type=成本调整 单并确认过账;锁账期需 bossOverride+老板角色头+备注")
     @PostMapping("/{id}/cost-adjust")
-    public R<Long> costAdjust(@PathVariable Long id, @Valid @RequestBody CostAdjustReq req) {
-        return R.ok(costAdjustService.execute(id, req, UID));
+    public R<Long> costAdjust(@PathVariable Long id, @Valid @RequestBody CostAdjustReq req,
+                              @RequestHeader(value = "X-User-Role", required = false) String role) {
+        return R.ok(costAdjustService.execute(id, req, UID,
+                top.aole.vend.modules.basedata.interfaces.Operators.resolve(role)));
     }
 }

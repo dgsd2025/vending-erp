@@ -20,6 +20,12 @@ public class CostAdjustReq {
 
     private String remark;
 
+    /**
+     * 老板越权(占位,与红冲 bossOverride 同一把尺子):原单入账月已锁时必须为 true
+     * 且携带老板角色头 + 备注才放行(七律审计:锁账守卫红冲/成本调整一致)。
+     */
+    private boolean bossOverride;
+
     @Data
     public static class Line {
         @NotNull(message = "明细行 ID 不能为空")

@@ -40,6 +40,7 @@ import top.aole.vend.modules.stock.mapper.StockLedgerMapper;
 import top.aole.vend.modules.stock.service.StockService;
 
 import java.io.ByteArrayOutputStream;
+import java.io.File;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -132,7 +133,6 @@ class ImportServiceTest {
         DocCreateReq req = new DocCreateReq();
         req.setDocType(DocType.PURCHASE_IN);
         req.setBizDate(LocalDate.of(2026, 6, 1));
-        req.setDocSource(DocService.SOURCE_MANUAL);
         DocItemReq item = new DocItemReq();
         item.setProductId(productId);
         item.setQty(new BigDecimal(qty));
@@ -374,7 +374,6 @@ class ImportServiceTest {
         manual.setDocType(DocType.TRANSFER_OUT);
         manual.setBizDate(LocalDate.of(2026, 7, 9));
         manual.setMachineId(m.getId());
-        manual.setDocSource(DocService.SOURCE_MANUAL);
         DocItemReq item = new DocItemReq();
         item.setProductId(p.getId());
         item.setQty(new BigDecimal("10"));
@@ -490,7 +489,6 @@ class ImportServiceTest {
         manual.setDocType(DocType.TRANSFER_OUT);
         manual.setBizDate(LocalDate.of(2026, 7, 14));
         manual.setMachineId(m.getId());
-        manual.setDocSource(DocService.SOURCE_MANUAL);
         DocItemReq item = new DocItemReq();
         item.setProductId(p.getId());
         item.setQty(new BigDecimal("5"));
@@ -570,5 +568,38 @@ class ImportServiceTest {
                 .eq(PriceLog::getImportBatchId, resp.getBatchId()));
         assertNotNull(log, "应写 price_log(change_source=导入侦测)");
         assertEquals("导入侦测", log.getChangeSource());
+    }
+
+    // ============================== P0-B 路径穿越回归 ==============================
+
+    @Test
+    void confirm_maliciousFileNameWithDotDot_archiveStaysInsideBatchDir() throws Exception {
+        machine("DEV-SEC1", "安全测试机");
+        Product p = product("安全测试水", "690777", null);
+        alias(null, "690777", "安全测试水500ml", p.getId());
+        byte[] file = saleFile(new Object[][]{
+                {"SEC001", "安全测试水500ml", "690777", 1, 1, "DEV-SEC1", 2.0, "正常订单", "微信", "2026-07-09 09:00:00"},
+        });
+
+        // 文件名带 ../../../:修复前会把文件搬到存储目录外(可覆盖任意可写文件)
+        ImportDtos.PreviewResp preview = importService.upload(
+                ImportBatch.TYPE_SALE, "../../../evil.xlsx", file);
+        ImportDtos.CommitResp resp = importService.confirm(preview.getToken(), OP);
+        assertEquals(1, resp.getRowOk());
+
+        ImportBatch batch = importBatchMapper.selectById(resp.getBatchId());
+        File storageRoot = new File("target/test-import-storage").getCanonicalFile();
+        File archive = new File(batch.getArchivePath()).getCanonicalFile();
+        // ① 归档必须落在 存储根/{batchId}/ 之内
+        File batchDir = new File(storageRoot, String.valueOf(batch.getId())).getCanonicalFile();
+        assertEquals(batchDir, archive.getParentFile(), "归档必须落在批次目录内:" + archive);
+        assertTrue(archive.exists(), "归档文件必须真实存在");
+        // ② 归档名 = 服务端 batchNo + 固定后缀,与客户端文件名完全无关
+        assertEquals(batch.getBatchNo() + ".xlsx", archive.getName());
+        // ③ 原始文件名剥掉路径后只存 DB 字段
+        assertEquals("evil.xlsx", batch.getFileName());
+        // ④ 存储目录外(修复前的落点 = 项目根)不许出现逃逸文件
+        assertFalse(new File(storageRoot.getParentFile().getParentFile(), "evil.xlsx").exists(),
+                "存储目录之外绝不许出现上传文件(路径穿越)");
     }
 }

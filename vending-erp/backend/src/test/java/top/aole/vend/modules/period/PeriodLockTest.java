@@ -103,7 +103,11 @@ class PeriodLockTest extends BaseIntegrationTest {
         assertTrue(e.getMessage().contains("已锁账"), "拒绝提示带锁账原因:" + e.getMessage());
 
         // 老板越权(占位)+强制备注 → 放行;红冲单入当月(旧报表永不重算)
-        Long redId = redFlushService.execute(originId, OP, "老板拍板:上月这单确实录错", true);
+        assertThrows(BizException.class,
+                () -> redFlushService.execute(originId, OP, "老板拍板:上月这单确实录错", true, "录单员"),
+                "P1-2:bossOverride 必须配老板角色头,非老板角色拒绝");
+        Long redId = redFlushService.execute(originId, OP, "老板拍板:上月这单确实录错", true,
+                PeriodLockService.ROLE_BOSS);
         assertEquals(DocStatus.RED_FLUSHED, docHeadMapper.selectById(originId).getDocStatus());
         DocHead red = docHeadMapper.selectById(redId);
         assertEquals(month(0), red.getBookPeriod(), "锁账期红冲的反向单入当月");
