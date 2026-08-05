@@ -9,10 +9,10 @@
 
 | # | Ticket | 状态 | 产出物 | 备注 |
 |---|---|---|---|---|
-| S0-1 | 解析 3 个 Excel,输出全 sheet 数据字典(结构/行数/口径) | ⬜ | sprint0/数据字典.md | pandas+openpyxl+xlrd |
-| S0-2 | 别名归集验证:配比底稿映射覆盖率,未映射销售名清单 | ⬜ | sprint0/别名覆盖率报告.md | |
-| S0-3 | 移动加权成本重算 6-7 月逐 SKU 毛利,vs 老 Excel《销售毛利表》对平(误差<1%) | ⬜ | sprint0/毛利对照表.csv + 对平报告.md | 硬验收#1;对不平查不出原因=熔断 |
-| S0-4 | 厂家后台自动下载可配置脚本框架(账密占位) | ⬜ | tools/fanmaiji-export/ | 真实凭据留老板 |
+| S0-1 | 解析 3 个 Excel,输出全 sheet 数据字典(结构/行数/口径) | 🔄 | sprint0/数据字典.md | pandas+openpyxl+xlrd |
+| S0-2 | 别名归集验证:配比底稿映射覆盖率,未映射销售名清单 | 🔄 | sprint0/别名覆盖率报告.md | |
+| S0-3 | 移动加权成本重算 6-7 月逐 SKU 毛利,vs 老 Excel《销售毛利表》对平(误差<1%) | 🔄 | sprint0/毛利对照表.csv + 对平报告.md | 硬验收#1;对不平查不出原因=熔断 |
+| S0-4 | 厂家后台自动下载可配置脚本框架(账密占位) | ✅(联真待老板probe) | tools/fanmaiji-export/ | 真实凭据留老板 |
 | S0-5 | 结算模式核实(追一笔真实交易) | ⏸ | 待办清单 | 需老板登后台,铁律11 |
 | S0-6 | 冲刺 0 结论报告(四项验证判定) | ⬜ | sprint0/冲刺0报告.md | |
 
@@ -20,8 +20,8 @@
 
 | # | Ticket | 状态 | 产出物 | 备注 |
 |---|---|---|---|---|
-| M1-0 | 脚手架:Spring Boot 2.7(JDK17 本地/target 8)+ Vue3+Vite+ElementPlus + docker-compose MySQL8(3308) + Flyway | ⬜ | vending-erp/ | ole 规范,表前缀 yc_vend_ |
-| M1-1 | DESIGN_DOC.md + 全量 schema DDL(Flyway V1.0.0),含 §13 全部 P0 字段/表 | ⬜ | DESIGN_DOC.md + V1.0.0__init.sql | 含 purchase_order/prekit_ticket/biz_period/book_period/direction/supplier_id/参考成本/order_type |
+| M1-0 | 脚手架:Spring Boot 2.7(JDK17 本地/target 8)+ Vue3+Vite+ElementPlus + docker-compose MySQL8(3308) + Flyway | 🔄 | vending-erp/ | ole 规范,表前缀 yc_vend_ |
+| M1-1 | DESIGN_DOC.md + 全量 schema DDL(Flyway V1.0.0),含 §13 全部 P0 字段/表 | 🔄 | DESIGN_DOC.md + V1.0.0__init.sql | 含 purchase_order/prekit_ticket/biz_period/book_period/direction/supplier_id/参考成本/order_type |
 | M1-2 | 档案模块:商品/别名/供应商/机器/货道/参数(设置中心 5 Tab 的 M1 部分) | ⬜ | API+UI | 停售不删;参数改动留痕 |
 | M1-3 | 导入中心:出货明细/系统补货记录/商品列表 3 通道(去重/预览/映射/错误报告/原始归档/整批回滚/别名待绑定队列) | ⬜ | API+UI | 转移单唯一生产者=补货记录导入;导入豁免负库存 |
 | M1-4 | 采购:purchase_order(轻量)+ 收货→入库单据链 + 采购价历史 | ⬜ | API+UI | 在途=Σ(订单-已收);收货带"应收"列 |
