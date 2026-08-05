@@ -29,17 +29,27 @@ export interface DocHead {
   bookPeriod?: string | null
   plLine?: string | null
   remark?: string | null
+  /** 数据来源:手工/导入/系统生成 */
+  docSource?: string | null
+  importBatchId?: number | null
+  matchedDocId?: number | null
+  confirmAt?: string | null
+  confirm2At?: string | null
 }
 
 export interface DocItemRow {
   id: number
   docId: number
   productId: number
+  /** 货道号(出库上架/退库精确到货道) */
+  slotNo?: string | null
   qty: number | string
   expectQty?: number | string | null
   unitPrice?: number | string | null
   amount?: number | string | null
   poItemId?: number | null
+  batchNo?: string | null
+  expireDate?: string | null
   remark?: string | null
 }
 

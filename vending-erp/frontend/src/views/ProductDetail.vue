@@ -15,6 +15,7 @@ import {
   type SkuAlias,
 } from '@/api/basedata'
 import { useAppStore } from '@/stores/app'
+import DocDetailDrawer from '@/components/doc/DocDetailDrawer.vue'
 
 /**
  * 单品详情页(M1-9,对照 mockup p14「体检报告」,设计七律#3:任何名词都能点进去):
@@ -74,6 +75,14 @@ const maxWeekQty = computed(() =>
 const maxDistQty = computed(() =>
   Math.max(1, ...(data.value?.machineDist ?? []).map((m) => Number(m.salesQty30))),
 )
+
+// ---------- 通用单据详情抽屉(P2-3,七律#3:流水/采购史里的单号可点) ----------
+const docDrawerVisible = ref(false)
+const docDrawerId = ref<number | null>(null)
+function openDocDrawer(docId: number) {
+  docDrawerId.value = docId
+  docDrawerVisible.value = true
+}
 
 /** 大事记:price_log + op_log 合并时间倒排(p14 大事记) */
 const events = computed(() => {
@@ -186,7 +195,9 @@ const events = computed(() => {
           </el-table-column>
           <el-table-column label="来源" min-width="110">
             <template #default="{ row }">
-              {{ row.supplierName ?? (row.docType === '期初' ? '期初迁入' : '—') }}
+              <a class="name-link" @click="openDocDrawer(row.docId)">
+                {{ row.supplierName ?? (row.docType === '期初' ? '期初迁入' : '—') }} ▸
+              </a>
               <span class="chip c-gray" style="margin-left: 4px">{{ row.docType }}</span>
             </template>
           </el-table-column>
@@ -244,7 +255,9 @@ const events = computed(() => {
             <template #default="{ row }">{{ (row.bizTime ?? '').replace('T', ' ').slice(0, 16) }}</template>
           </el-table-column>
           <el-table-column label="单据" width="150">
-            <template #default="{ row }"><span class="num mini">{{ row.docNo }}</span></template>
+            <template #default="{ row }">
+              <a class="num mini name-link" @click="openDocDrawer(row.docId)">{{ row.docNo }} ▸</a>
+            </template>
           </el-table-column>
           <el-table-column label="类型" width="90">
             <template #default="{ row }"><span class="chip c-blue">{{ row.docType }}</span></template>
@@ -283,6 +296,9 @@ const events = computed(() => {
     <p class="ledger-foot-note">
       — 每个单品都是这一页;从 库存管理 / 商品列表 点商品名即达(七律#3:任何名词都能点进去)—
     </p>
+
+    <!-- 通用单据详情抽屉(P2-3:流水/采购史单号点开即达) -->
+    <DocDetailDrawer v-model="docDrawerVisible" :doc-id="docDrawerId" />
   </div>
 </template>
 

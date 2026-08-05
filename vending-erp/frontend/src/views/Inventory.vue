@@ -3,6 +3,7 @@ import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { reportApi, type StockLedgerRow, type StockResp, type StockRow } from '@/api/report'
+import DocDetailDrawer from '@/components/doc/DocDetailDrawer.vue'
 
 /**
  * 库存管理页(M1-6,对照 mockup p13):
@@ -64,6 +65,14 @@ async function openLedger(row: StockRow) {
   }
 }
 
+// ---------- 通用单据详情抽屉(P2-3,七律#3:流水里的单号可点) ----------
+const docDrawerVisible = ref(false)
+const docDrawerId = ref<number | null>(null)
+function openDocDrawer(docId: number) {
+  docDrawerId.value = docId
+  docDrawerVisible.value = true
+}
+
 // ---------- 成本重算 ----------
 const recalcLoading = ref(false)
 async function doRecalc() {
@@ -114,7 +123,14 @@ async function doRecalc() {
           clearable
           style="width: 220px; margin-left: auto"
         />
-        <el-button size="small" :loading="recalcLoading" @click="doRecalc">♻️ 成本重算回写</el-button>
+        <el-tooltip
+          content="⚡ 何时需要点:大量补录历史采购 / 别名回补历史销售之后点一次,把移动加权成本快照刷回销售记录与流水。日常报表动态算,不点也不影响。"
+          placement="top"
+          :show-after="100"
+        >
+          <el-button size="small" :loading="recalcLoading" @click="doRecalc">♻️ 成本重算回写</el-button>
+        </el-tooltip>
+        <span class="text-11px text-gray-400">⚡ 补录历史采购后点</span>
         <el-button size="small" @click="load">刷新</el-button>
         <el-tag effect="plain" type="success" size="large">
           数据截至 {{ data?.dataAsOf ?? '——(尚未导入)' }}
@@ -207,7 +223,7 @@ async function doRecalc() {
         <el-table-column prop="bizTime" label="时间" width="150" />
         <el-table-column prop="docNo" label="单据" width="150">
           <template #default="{ row }">
-            <span class="font-mono text-12px">{{ row.docNo }}</span>
+            <a class="font-mono text-12px name-link" @click="openDocDrawer(row.docId)">{{ row.docNo }} ▸</a>
           </template>
         </el-table-column>
         <el-table-column label="类型" width="110">
@@ -239,6 +255,9 @@ async function doRecalc() {
         注:销售出货不产生库存流水行(机器账按「快照+销售增量」推算),此处仅显示单据流水。
       </p>
     </el-drawer>
+
+    <!-- 通用单据详情抽屉(P2-3:流水单号点开即达) -->
+    <DocDetailDrawer v-model="docDrawerVisible" :doc-id="docDrawerId" />
   </div>
 </template>
 

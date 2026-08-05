@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import { reportApi, type MachineOverviewResp, type SlotRow } from '@/api/report'
 import { pageOpLogs, type OpLog } from '@/api/basedata'
 import { useAppStore } from '@/stores/app'
+import DocDetailDrawer from '@/components/doc/DocDetailDrawer.vue'
 
 /**
  * 机器详情页(M1-9,对照 mockup p15,设计七律#3:任何名词都能点进去):
@@ -45,16 +46,45 @@ const money = (v: number | string | null | undefined) =>
 const statusChip = (s: string | null | undefined) =>
   s === '在线' || s === '在售' ? 'c-green' : s === '故障' ? 'c-red' : 'c-gray'
 
-/** planogram 格子配色(mockup p12/p15):红=缺货 黄=偏低 绿=正常 灰=空道 */
+/**
+ * planogram 格子配色(mockup p12/p15):红=缺货 黄=偏低 绿=正常 灰=空道。
+ * M1-10 P1-2 整改:slot.current_qty 无写手恒 0(会全场假红),数量源改用 estQty
+ * (该机该 SKU 推算库存 = 最近后台快照锚点 + 之后增量,machine overview 接口带出)。
+ * estQty 为 null 或负数(缺锚点未校准)→ 不配色,格子明示「未校准」,绝不出假红灯。
+ * 同 SKU 绑多货道无法拆分 → estShared,格子显 SKU 级合并量 + 「按品合并」徽标,分母=同 SKU 容量合计。
+ */
+function slotEst(s: SlotRow): number | null {
+  if (s.estQty == null) return null
+  const q = Number(s.estQty)
+  return q < 0 ? null : q // 负推算 = 缺快照锚点,视同未校准
+}
 function slotClass(s: SlotRow): string {
   if (!s.productId) return 'empty'
-  const cap = Number(s.capacity ?? 0)
-  const qty = Number(s.currentQty ?? 0)
+  const qty = slotEst(s)
+  if (qty == null) return 'uncal'
+  const cap = Number(s.estCapacity ?? s.capacity ?? 0)
   if (cap <= 0) return 'ok'
   const ratio = qty / cap
   if (ratio <= 0.15) return 'bad'
   if (ratio <= 0.4) return 'warn'
   return 'ok'
+}
+function slotQtyText(s: SlotRow): string {
+  if (!s.productId) return '＋绑商品'
+  const qty = slotEst(s)
+  if (qty == null) return '— 未校准'
+  return `${n(qty)}/${n(s.estCapacity ?? s.capacity)}`
+}
+/** 格子 tooltip:把数量口径写清楚(推算账,非货道实测) */
+function slotTooltip(s: SlotRow): string {
+  if (!s.productId) return `${s.slotNo} · 空货道`
+  const base = `${s.slotNo} · ${s.productName}`
+  const qty = slotEst(s)
+  if (qty == null) return `${base} · 现量未校准:该 SKU 暂无可信推算量(缺后台快照锚点),导快照/盘点后转正`
+  const scope = s.estShared
+    ? `口径:该 SKU 绑了本机多条货道,推算量按品合并、无法拆到单格;容量为同 SKU 货道合计`
+    : `口径:现量 = 该机该 SKU 推算库存(最近后台快照 + 之后增量),非货道传感器实测`
+  return `${base} · ${n(qty)}/${n(s.estCapacity ?? s.capacity)} · ${scope}`
 }
 
 const maxDayAmt = computed(() =>
@@ -71,6 +101,14 @@ const fillPct = computed(() => {
 })
 const fmtAsOf = (v: string | null | undefined) =>
   v ? v.replace('T', ' ').slice(0, 16) : '——'
+
+// ---------- 通用单据详情抽屉(P2-3,七律#3:单号可点) ----------
+const docDrawerVisible = ref(false)
+const docDrawerId = ref<number | null>(null)
+function openDocDrawer(docId: number) {
+  docDrawerId.value = docId
+  docDrawerVisible.value = true
+}
 </script>
 
 <template>
@@ -170,7 +208,9 @@ const fmtAsOf = (v: string | null | undefined) =>
             <template #default="{ row }">{{ row.bizDate }}</template>
           </el-table-column>
           <el-table-column label="单号" min-width="140">
-            <template #default="{ row }"><span class="num mini">{{ row.docNo }}</span></template>
+            <template #default="{ row }">
+              <a class="num mini name-link" @click="openDocDrawer(row.docId)">{{ row.docNo }} ▸</a>
+            </template>
           </el-table-column>
           <el-table-column label="类型" width="90">
             <template #default="{ row }">
@@ -205,7 +245,7 @@ const fmtAsOf = (v: string | null | undefined) =>
     <div class="ledger-card" v-if="data">
       <h3>
         🗄 货道 planogram
-        <span class="hint">格子 = 货道:编号 / 绑定商品 / 现量÷容量;🔴缺货 🟡偏低 ▫️空道 · 改绑去「设置中心 → 货道配置」</span>
+        <span class="hint">格子 = 货道:编号 / 绑定商品 / 推算现量÷容量;🔴缺货 🟡偏低 ▫️空道 · 悬停格子看口径 · 改绑去「设置中心 → 货道配置」</span>
       </h3>
       <div v-if="data.slots.length" class="plano">
         <div
@@ -213,12 +253,13 @@ const fmtAsOf = (v: string | null | undefined) =>
           :key="s.slotId"
           class="cell"
           :class="slotClass(s)"
-          :title="s.productName ? `${s.slotNo} · ${s.productName}(${s.currentQty ?? 0}/${s.capacity ?? '—'})` : `${s.slotNo} · 空货道`"
+          :title="slotTooltip(s)"
           @click="s.productId && router.push(`/products/${s.productId}`)"
         >
           <b class="num">{{ s.slotNo }}</b>
           <span class="cell-name">{{ s.productName ?? '空货道' }}</span>
-          <span class="num cell-qty">{{ s.productId ? `${n(s.currentQty ?? 0)}/${n(s.capacity)}` : '＋绑商品' }}</span>
+          <span class="num cell-qty">{{ slotQtyText(s) }}</span>
+          <span v-if="s.productId && s.estShared && slotEst(s) != null" class="cell-badge">按品合并</span>
         </div>
       </div>
       <el-empty v-else description="货道未配置 —— 去「设置中心 → 机器与货道 → 货道配置」批量初始化" :image-size="60" />
@@ -227,6 +268,9 @@ const fmtAsOf = (v: string | null | undefined) =>
     <p class="ledger-foot-note">
       — 每台机器都是这一页;从 设置中心机器列表 / 报表机器维度 点机器名即达 —
     </p>
+
+    <!-- 通用单据详情抽屉(P2-3:补货史单号点开即达) -->
+    <DocDetailDrawer v-model="docDrawerVisible" :doc-id="docDrawerId" />
   </div>
 </template>
 
@@ -381,6 +425,23 @@ h6.blk {
   border: 1px dashed var(--line2);
   color: #a89f8a;
   cursor: default;
+}
+/* P1-2:该 SKU 无可信推算量(缺快照锚点)→ 不配色不出假红,明示未校准 */
+.cell.uncal {
+  background: #f4f1ea;
+  border: 1px solid var(--line);
+}
+.cell.uncal .cell-qty {
+  color: #a89f8a;
+}
+.cell-badge {
+  font-size: 9px;
+  color: var(--ink2);
+  background: #ece6d8;
+  border-radius: 3px;
+  padding: 0 3px;
+  align-self: center;
+  line-height: 1.5;
 }
 .cell-name {
   overflow: hidden;

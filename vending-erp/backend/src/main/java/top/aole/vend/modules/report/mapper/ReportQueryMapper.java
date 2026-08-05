@@ -43,7 +43,7 @@ public interface ReportQueryMapper {
     LocalDateTime dataAsOf();
 
     /** 单品流水(仓库+机器两本账,时序倒排),点开看流水 */
-    @Select("SELECT l.id, l.biz_time, d.doc_no, d.doc_type, l.location_type, m.machine_name, " +
+    @Select("SELECT l.id, l.doc_id, l.biz_time, d.doc_no, d.doc_type, l.location_type, m.machine_name, " +
             "       l.change_qty, l.balance_qty, l.unit_cost, l.amount " +
             "FROM yc_vend_stock_ledger l " +
             "JOIN yc_vend_doc_head d ON d.id = l.doc_id " +
@@ -81,7 +81,7 @@ public interface ReportQueryMapper {
     // ============================== 单品/机器详情(M1-9 只读) ==============================
 
     /** 单品采购史(采购入库/期初 已过账仓库正向流水,带供应商),时序倒排 */
-    @Select("SELECT l.biz_time, d.doc_no, d.doc_type, s.supplier_name, " +
+    @Select("SELECT d.id AS docId, l.biz_time, d.doc_no, d.doc_type, s.supplier_name, " +
             "       l.change_qty AS qty, l.unit_cost, l.amount " +
             "FROM yc_vend_stock_ledger l " +
             "JOIN yc_vend_doc_head d ON d.id = l.doc_id " +

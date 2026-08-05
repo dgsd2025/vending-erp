@@ -267,8 +267,13 @@ onMounted(load)
             />
           </template>
         </el-table-column>
-        <el-table-column label="现量" width="70" align="right">
-          <template #default="{ row }"><span class="num">{{ Number(row.currentQty) }}</span></template>
+        <!-- P1-2 整改:slot.current_qty 无写手恒 0(假数据),此处不再展示;推算现量看机器详情 planogram -->
+        <el-table-column label="现量" width="90" align="right">
+          <template #default>
+            <el-tooltip content="货道级现量无可信数据源(slot 表现量无写手);机内现量按 SKU 推算,去「机器详情 → planogram」看" placement="top">
+              <span class="mini" style="color: #a89f8a">看详情页</span>
+            </el-tooltip>
+          </template>
         </el-table-column>
         <el-table-column label="状态" width="120">
           <template #default="{ row }">
@@ -289,7 +294,8 @@ onMounted(load)
         </template>
       </el-table>
       <p class="mini" style="margin-top: 10px">
-        现量为推算值,权威以后台缺货页/盘点为准;容量是机器层补货水位 S 的硬上限(S ≤ 该SKU货道数×单道容量)。
+        这里只管「绑品 + 容量」两件可信事;机内现量按 SKU 推算(快照+增量),在「机器详情 → planogram」看,权威以后台缺货页/盘点为准。
+        容量是机器层补货水位 S 的硬上限(S ≤ 该SKU货道数×单道容量)。
       </p>
     </el-drawer>
   </div>

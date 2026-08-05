@@ -596,12 +596,35 @@ public class ReportService {
         resp.getTopSkus().addAll(tops.subList(0, Math.min(8, tops.size())));
 
         // ---- 机内库存(推算)+ 货道 planogram + 补货史 ----
+        Map<Long, BigDecimal> stockBySku = stockService.getMachineStockAll(machineId);
         BigDecimal stockSum = BigDecimal.ZERO;
-        for (BigDecimal q : stockService.getMachineStockAll(machineId).values()) {
+        for (BigDecimal q : stockBySku.values()) {
             stockSum = stockSum.add(nvl(q));
         }
         resp.setMachineStockQty(stockSum);
         List<ReportDtos.SlotRow> slots = reportQueryMapper.machineSlots(machineId);
+        // P1-2 整改:slot.current_qty 无写手恒 0(假红灯),格子现量改用该机 SKU 推算库存。
+        // 同 SKU 绑多货道无法拆分 → 每格都给 SKU 级合并量 + estShared 标记,配色分母用同 SKU 容量合计。
+        Map<Long, List<ReportDtos.SlotRow>> slotsBySku = new LinkedHashMap<>();
+        for (ReportDtos.SlotRow s : slots) {
+            if (s.getProductId() != null) {
+                slotsBySku.computeIfAbsent(s.getProductId(), k -> new ArrayList<>()).add(s);
+            }
+        }
+        for (Map.Entry<Long, List<ReportDtos.SlotRow>> e : slotsBySku.entrySet()) {
+            List<ReportDtos.SlotRow> group = e.getValue();
+            BigDecimal est = stockBySku.get(e.getKey());
+            boolean shared = group.size() > 1;
+            BigDecimal capSum = BigDecimal.ZERO;
+            for (ReportDtos.SlotRow s : group) {
+                capSum = capSum.add(nvl(s.getCapacity()));
+            }
+            for (ReportDtos.SlotRow s : group) {
+                s.setEstQty(est);
+                s.setEstShared(shared);
+                s.setEstCapacity(shared ? capSum : s.getCapacity());
+            }
+        }
         resp.getSlots().addAll(slots);
         BigDecimal cap = BigDecimal.ZERO;
         for (ReportDtos.SlotRow s : slots) {

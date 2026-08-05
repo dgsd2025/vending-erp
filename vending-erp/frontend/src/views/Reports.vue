@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
   reportApi,
   type GrossMarginResp,
@@ -10,7 +11,9 @@ import {
  * 报表页(M1-6):毛利报表(月份切换 × SKU/机器两维)+ 月度进销存汇总。
  * 口径(§13 定死):毛利 = 实收 − 移动加权成本;销售额 = 正常 + 退款(负),兑换收入 0 计成本,测试不计;
  * 无采购史 SKU 毛利显「—(成本待补)」,不进合计。
+ * 七律#3(M1-10 P1-1 整改):毛利表 SKU 行/机器行名词可点,下钻单品/机器详情(row.key 即 id)。
  */
+const router = useRouter()
 
 const month = ref<string>('')
 const months = ref<string[]>([])
@@ -105,7 +108,8 @@ const fmtQty = (v: number | null | undefined) => (v == null ? '—' : Number(v).
           <el-table :data="gmSku?.rows ?? []" v-loading="gmLoading" size="small" max-height="560">
             <el-table-column label="商品" min-width="190">
               <template #default="{ row }">
-                <b>{{ row.name }}</b>
+                <b v-if="row.key != null" class="name-link" @click="router.push(`/products/${row.key}`)">{{ row.name }} ↗</b>
+                <b v-else>{{ row.name }}</b>
                 <span class="text-11px text-gray-400 ml-4px">{{ row.code }}</span>
               </template>
             </el-table-column>
@@ -157,7 +161,8 @@ const fmtQty = (v: number | null | undefined) => (v == null ? '—' : Number(v).
           <el-table :data="gmMachine?.rows ?? []" v-loading="gmLoading" size="small" max-height="560">
             <el-table-column label="机器" min-width="160">
               <template #default="{ row }">
-                <b>{{ row.name }}</b>
+                <b v-if="row.key != null" class="name-link" @click="router.push(`/machines/${row.key}`)">{{ row.name }} ↗</b>
+                <b v-else>{{ row.name }}</b>
                 <span class="text-11px text-gray-400 ml-4px">{{ row.code }}</span>
               </template>
             </el-table-column>
@@ -199,7 +204,8 @@ const fmtQty = (v: number | null | undefined) => (v == null ? '—' : Number(v).
           <el-table :data="inv?.rows ?? []" v-loading="invLoading" size="small" max-height="520">
             <el-table-column label="商品" min-width="180" fixed>
               <template #default="{ row }">
-                <b>{{ row.name }}</b>
+                <b v-if="row.productId != null" class="name-link" @click="router.push(`/products/${row.productId}`)">{{ row.name }} ↗</b>
+                <b v-else>{{ row.name }}</b>
                 <span class="text-11px text-gray-400 ml-4px">{{ row.code }}</span>
               </template>
             </el-table-column>

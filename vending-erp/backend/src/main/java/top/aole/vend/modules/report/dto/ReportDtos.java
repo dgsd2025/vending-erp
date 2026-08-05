@@ -155,6 +155,8 @@ public final class ReportDtos {
     @Data
     public static class StockLedgerRow {
         private Long id;
+        /** 单据 ID(七律#3:单号可下钻到通用单据详情抽屉) */
+        private Long docId;
         private LocalDateTime bizTime;
         private String docNo;
         private String docType;
@@ -202,6 +204,8 @@ public final class ReportDtos {
     /** 采购史行(来自 采购入库/期初 已过账流水) */
     @Data
     public static class PurchaseHistRow {
+        /** 单据 ID(七律#3:单号可下钻到通用单据详情抽屉) */
+        private Long docId;
         private LocalDateTime bizTime;
         private String docNo;
         private String docType;
@@ -249,7 +253,12 @@ public final class ReportDtos {
 
     // ============================== 机器详情(M1-9,p15) ==============================
 
-    /** 货道行(planogram 格子) */
+    /**
+     * 货道行(planogram 格子)。
+     * 口径(M1-10 P1-2 整改):slot.current_qty 无写手恒 0(仅 initSlots 写过一次),不可信;
+     * 格子现量/配色一律用 estQty(该机该 SKU 推算库存 = 最近快照锚点 + 增量),
+     * 同 SKU 绑多货道无法拆分 → estShared=true,格子显示 SKU 级合并量 + 「按品合并」徽标。
+     */
     @Data
     public static class SlotRow {
         private Long slotId;
@@ -258,8 +267,15 @@ public final class ReportDtos {
         private String productName;
         private String skuCode;
         private BigDecimal capacity;
+        /** ⚠️ stale:slot 表现量无写手恒 0,前端禁止用它出红绿灯(P1-2),仅保留字段兼容 */
         private BigDecimal currentQty;
         private String slotStatus;
+        /** 该机该 SKU 推算库存(锚点快照+增量;null=该 SKU 无任何推算数据) */
+        private BigDecimal estQty;
+        /** 配色分母:该 SKU 在本机所有货道的容量合计(单货道时=本格容量) */
+        private BigDecimal estCapacity;
+        /** 同 SKU 绑了多条货道,推算量无法拆分到格子(前端显「按品合并」徽标) */
+        private boolean estShared;
     }
 
     /** 本机 SKU 销量行(30 天 TOP) */

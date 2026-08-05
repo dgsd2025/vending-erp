@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import ProductSelect from '@/components/basedata/ProductSelect.vue'
 import RedFlushDialog from '@/components/doc/RedFlushDialog.vue'
 import CostAdjustDialog from '@/components/doc/CostAdjustDialog.vue'
+import DocDetailDrawer from '@/components/doc/DocDetailDrawer.vue'
 import { pageSuppliers, type Supplier } from '@/api/basedata'
 import {
   cancelPurchaseOrder, closePurchaseOrder, confirmReceipt, createPurchaseOrder,
@@ -57,6 +58,14 @@ async function loadOrders() {
 
 function orderStatusChip(status?: string) {
   return { 草稿: 'c-gray', 已下单: 'c-blue', 部分到货: 'c-amber', 已完成: 'c-green', 已取消: 'c-gray' }[status || ''] || 'c-gray'
+}
+
+// ---------- 通用单据详情抽屉(P2-3,七律#3:入库单号可点) ----------
+const docDrawerVisible = ref(false)
+const docDrawerId = ref<number | null>(null)
+function openDocDrawer(docId: number) {
+  docDrawerId.value = docId
+  docDrawerVisible.value = true
 }
 
 async function doPlace(row: PoVo) {
@@ -489,7 +498,9 @@ onMounted(() => {
       <h3>📥 采购入库单 <span class="hint">收货单→入库单 = 一张单两个状态;确认后不可改,只能红冲</span></h3>
       <el-table :data="receipts" size="small">
         <el-table-column label="单号" width="150">
-          <template #default="{ row }"><span class="num">{{ row.docNo }}</span></template>
+          <template #default="{ row }">
+            <a class="num name-link" @click="openDocDrawer(row.id)">{{ row.docNo }} ▸</a>
+          </template>
         </el-table-column>
         <el-table-column label="日期" width="100">
           <template #default="{ row }"><span class="num">{{ row.bizDate }}</span></template>
@@ -706,6 +717,9 @@ onMounted(() => {
       v-model="costAdjustVisible" :doc-id="reverseDocId"
       :product-names="reverseProductNames" @done="afterReverse"
     />
+
+    <!-- 通用单据详情抽屉(P2-3:入库单号点开即达) -->
+    <DocDetailDrawer v-model="docDrawerVisible" :doc-id="docDrawerId" />
   </div>
 </template>
 

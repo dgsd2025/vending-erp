@@ -85,6 +85,8 @@ export interface StockResp {
 
 export interface StockLedgerRow {
   id: number
+  /** 单据 ID(七律#3:单号可点开通用单据详情抽屉) */
+  docId: number
   bizTime: string
   docNo: string
   docType: string
@@ -119,6 +121,8 @@ export interface MachineDistRow {
 }
 
 export interface PurchaseHistRow {
+  /** 单据 ID(七律#3:单号可点开通用单据详情抽屉) */
+  docId: number
   bizTime: string
   docNo: string
   docType: string
@@ -165,8 +169,15 @@ export interface SlotRow {
   productName: string | null
   skuCode: string | null
   capacity: number | null
+  /** ⚠️ stale 字段:slot 表现量无写手恒 0,禁止用它出红绿灯(P1-2),展示一律用 estQty */
   currentQty: number | null
   slotStatus: string | null
+  /** 该机该 SKU 推算库存(锚点快照+增量;null=无推算数据,格子显「—」不配色) */
+  estQty: number | null
+  /** 配色分母:同 SKU 全部货道容量合计(单货道=本格容量) */
+  estCapacity: number | null
+  /** 同 SKU 绑多货道无法拆分 → 格子显 SKU 级合并量 + 「按品合并」徽标 */
+  estShared: boolean
 }
 
 export interface SkuSalesRow {
