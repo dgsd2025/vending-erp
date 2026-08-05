@@ -10,6 +10,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import top.aole.vend.common.exception.BizException;
 import top.aole.vend.modules.basedata.application.OpLogService;
+import top.aole.vend.modules.basedata.application.ProductService;
 import top.aole.vend.modules.purchase.domain.entity.PurchaseOrder;
 import top.aole.vend.modules.purchase.domain.entity.PurchaseOrderItem;
 import top.aole.vend.modules.purchase.dto.PoCreateReq;
@@ -44,11 +45,13 @@ public class PurchaseOrderService {
     private final PurchaseOrderMapper poMapper;
     private final PurchaseOrderItemMapper poItemMapper;
     private final OpLogService opLogService;
+    private final ProductService productService;
 
     // ============================== 建单 / 改草稿 ==============================
 
     @Transactional(rollbackFor = Exception.class)
     public Long create(PoCreateReq req, String operator) {
+        assertItemsPurchasable(req); // P2-10 清仓中禁采购(穿行场景9)
         PurchaseOrder po = new PurchaseOrder();
         po.setPoNo(generatePoNo());
         po.setSupplierId(req.getSupplierId());
@@ -68,6 +71,7 @@ public class PurchaseOrderService {
         if (!PurchaseOrder.ST_DRAFT.equals(po.getPoStatus())) {
             throw new BizException(String.format("订货单[%s]当前状态[%s],仅草稿可修改", po.getPoNo(), po.getPoStatus()));
         }
+        assertItemsPurchasable(req); // P2-10:改草稿也不许夹带清仓中商品
         String before = JSONUtil.toJsonStr(po);
         po.setSupplierId(req.getSupplierId());
         po.setExpectDate(req.getExpectDate());
@@ -253,6 +257,13 @@ public class PurchaseOrderService {
         vo.setInTransitQty(active ? vo.getQtyOrdered().subtract(vo.getQtyReceived()) : BigDecimal.ZERO);
         vo.setOverdue(active && po.getExpectDate() != null && po.getExpectDate().isBefore(LocalDate.now()));
         return vo;
+    }
+
+    /** P2-10 清仓中禁采购守卫(穿行场景9):订货单入口 */
+    private void assertItemsPurchasable(PoCreateReq req) {
+        productService.assertPurchasable(req.getItems().stream()
+                .map(PoCreateReq.Item::getProductId)
+                .collect(java.util.stream.Collectors.toList()));
     }
 
     private void insertItems(Long poId, List<PoCreateReq.Item> items) {

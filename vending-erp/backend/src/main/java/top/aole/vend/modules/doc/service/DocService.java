@@ -9,6 +9,7 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import top.aole.vend.common.exception.BizException;
 import top.aole.vend.modules.basedata.application.OpLogService;
+import top.aole.vend.modules.basedata.application.ProductService;
 import top.aole.vend.modules.doc.domain.DocStateMachine;
 import top.aole.vend.modules.doc.domain.entity.DocHead;
 import top.aole.vend.modules.doc.domain.entity.DocItem;
@@ -53,6 +54,7 @@ public class DocService {
     private final DocHeadMapper docHeadMapper;
     private final DocItemMapper docItemMapper;
     private final OpLogService opLogService;
+    private final ProductService productService;
     private final StockService stockService;
     private final PeriodLockService periodLockService;
     private final ApplicationEventPublisher eventPublisher;
@@ -67,6 +69,11 @@ public class DocService {
         }
         if (req.getDocType() == DocType.RED_FLUSH && req.getRedFlushOf() == null) {
             throw new BizException("红冲单必须指向原单据(red_flush_of)");
+        }
+        // P2-10 清仓中禁采购(穿行场景9):采购入库单建单即拦;上架/退货/报损不受限(死锁解除)
+        if (req.getDocType() == DocType.PURCHASE_IN) {
+            productService.assertPurchasable(req.getItems().stream()
+                    .map(DocItemReq::getProductId).collect(Collectors.toList()));
         }
         DocHead head = new DocHead();
         head.setDocNo(generateDocNo(req.getDocType(), req.getBizDate()));

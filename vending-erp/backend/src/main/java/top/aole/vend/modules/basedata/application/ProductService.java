@@ -120,6 +120,26 @@ public class ProductService {
         return after;
     }
 
+    /**
+     * 采购守卫(P2-10/穿行场景9):清仓中商品禁采购——订货单与采购入库两个入口共用。
+     * 只拦档案里明确是"清仓中"的商品;档案不存在的 ID 不拦(期初裸数据/测试数据不受影响)。
+     */
+    public void assertPurchasable(java.util.Collection<Long> productIds) {
+        if (productIds == null || productIds.isEmpty()) {
+            return;
+        }
+        List<Product> blocked = productMapper.selectList(new LambdaQueryWrapper<Product>()
+                .in(Product::getId, productIds)
+                .eq(Product::getProductStatus, "清仓中"));
+        if (!blocked.isEmpty()) {
+            String names = blocked.stream()
+                    .map(p -> p.getSkuCode() + " " + p.getProductName())
+                    .collect(java.util.stream.Collectors.joining("、"));
+            throw new BizException("清仓中商品禁止采购(P2-10):" + names
+                    + "。如需恢复进货,请先在商品档案改回\"在售\"");
+        }
+    }
+
     private boolean priceChanged(BigDecimal oldPrice, BigDecimal newPrice) {
         if (newPrice == null) {
             return false;
