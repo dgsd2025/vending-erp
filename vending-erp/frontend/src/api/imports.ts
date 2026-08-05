@@ -103,6 +103,94 @@ export interface PageResult<T> {
   current: number
 }
 
+// ---------- 期初导入向导(M1-6) ----------
+
+export interface ConflictGroup {
+  code: string
+  names: string[]
+  splitCodes: string[]
+}
+
+export interface Step1PreviewResp {
+  token: string
+  fileName: string
+  productCount: number
+  aliasCount: number
+  machineCount: number
+  conflicts: ConflictGroup[]
+  autoCreateCodes: string[]
+  warnings: string[]
+}
+
+export interface Step1Resp {
+  batchId: number
+  productCreated: number
+  productSkipped: number
+  aliasCreated: number
+  machineCreated: number
+  splitProducts: number
+}
+
+export interface Step2PreviewResp {
+  token: string
+  fileName: string
+  rowCount: number
+  totalQty: number
+  totalAmt: number
+  dates: string[]
+  supplierNames: string[]
+  missingProducts: string[]
+  warnings: string[]
+}
+
+export interface Step2Resp {
+  batchId: number
+  docsCreated: number
+  itemCount: number
+  totalAmt: number
+  supplierCreated: number
+  rowFail: number
+}
+
+export interface Step3PreviewResp {
+  token: string
+  fileName: string
+  rowCount: number
+  totalAmt: number
+  warnings: string[]
+}
+
+export interface InitialStepState {
+  done: boolean
+  batchId: number | null
+  batchNo: string | null
+  batchStatus: string | null
+  doneAt: string | null
+  rowOk: number
+  rowFail: number
+}
+
+export interface InitialStatusResp {
+  step1: InitialStepState
+  step2: InitialStepState
+  step3: InitialStepState
+  allStepsDone: boolean
+  systemPurchaseTotal: number
+  systemSaleTotal: number
+}
+
+export interface ValidateResp {
+  systemPurchase: number
+  systemSale: number
+  expectedPurchase: number
+  expectedSale: number
+  purchaseDiff: number
+  saleDiff: number
+  purchasePass: boolean
+  salePass: boolean
+  pass: boolean
+}
+
 const operatorHeader = () => ({ 'X-User-Name': encodeURIComponent('管理员') })
 
 export const importsApi = {
@@ -137,5 +225,32 @@ export const importsApi = {
   },
   confirmPriceChanges(batchId: number, items: { productId: number; newPrice: number }[]): Promise<number> {
     return request.post(`/v1/imports/batches/${batchId}/price-changes/confirm`, { items }, { headers: operatorHeader() })
+  },
+}
+
+/** 期初导入向导 API:三步都直接吃老 Excel 套表原文件 */
+export const initialApi = {
+  status(): Promise<InitialStatusResp> {
+    return request.get('/v1/imports/initial/status')
+  },
+  stepUpload(step: 1 | 2 | 3, file: File): Promise<Step1PreviewResp & Step2PreviewResp & Step3PreviewResp> {
+    const form = new FormData()
+    form.append('file', file)
+    return request.post(`/v1/imports/initial/step${step}/upload`, form, {
+      headers: { 'Content-Type': 'multipart/form-data' },
+      timeout: 120000,
+    })
+  },
+  step1Confirm(token: string, resolutions: { code: string; mode: 'split' | 'first' }[]): Promise<Step1Resp> {
+    return request.post('/v1/imports/initial/step1/confirm', { token, resolutions }, { headers: operatorHeader(), timeout: 300000 })
+  },
+  step2Confirm(token: string): Promise<Step2Resp> {
+    return request.post(`/v1/imports/initial/step2/confirm?token=${token}`, null, { headers: operatorHeader(), timeout: 300000 })
+  },
+  step3Confirm(token: string): Promise<CommitResp> {
+    return request.post(`/v1/imports/initial/step3/confirm?token=${token}`, null, { headers: operatorHeader(), timeout: 300000 })
+  },
+  validate(expectedPurchase: number, expectedSale: number): Promise<ValidateResp> {
+    return request.post('/v1/imports/initial/validate', { expectedPurchase, expectedSale }, { headers: operatorHeader() })
   },
 }

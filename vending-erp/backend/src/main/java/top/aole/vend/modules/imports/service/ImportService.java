@@ -240,7 +240,8 @@ public class ImportService {
 
     // ============================== 通道1:出货明细 → sale_record ==============================
 
-    private void processSale(ImportBatch batch, ParsedSheet sheet, CommitResp resp) {
+    /** 包私有:期初向导第③步(历史销售)复用同一处理管线(InitialImportService) */
+    void processSale(ImportBatch batch, ParsedSheet sheet, CommitResp resp) {
         AliasMatcher.Session alias = aliasMatcher.openSession();
         Map<String, Long> machineByDevice = loadMachines();
         Set<String> existingKeys = new HashSet<>();
@@ -588,11 +589,17 @@ public class ImportService {
         }
         RollbackResp resp = new RollbackResp();
 
-        if (ImportBatch.TYPE_PRODUCT_LIST.equals(batch.getFileType())) {
-            throw new BizException("商品列表导入不支持整批回滚(别名绑一次终身生效);如需调整请到「商品档案 → 别名管理」逐条解绑");
+        if (ImportBatch.TYPE_PRODUCT_LIST.equals(batch.getFileType())
+                || ImportBatch.TYPE_INITIAL_PRODUCT.equals(batch.getFileType())) {
+            throw new BizException("商品/别名类导入不支持整批回滚(别名绑一次终身生效);如需调整请到「商品档案 → 别名管理」逐条解绑");
         }
 
-        if (ImportBatch.TYPE_SALE.equals(batch.getFileType())) {
+        boolean saleLike = ImportBatch.TYPE_SALE.equals(batch.getFileType())
+                || ImportBatch.TYPE_INITIAL_SALE.equals(batch.getFileType());
+        boolean docLike = ImportBatch.TYPE_REPLENISH.equals(batch.getFileType())
+                || ImportBatch.TYPE_INITIAL_PURCHASE.equals(batch.getFileType());
+
+        if (saleLike) {
             // 下游引用检查:已被平台结算单核销的销售记录不许撤
             List<SaleRecord> settled = saleRecordMapper.selectList(new LambdaQueryWrapper<SaleRecord>()
                     .eq(SaleRecord::getImportBatchId, batchId).isNotNull(SaleRecord::getSettlementId));
@@ -611,7 +618,7 @@ public class ImportService {
             resp.setSaleRemoved(removed);
         }
 
-        if (ImportBatch.TYPE_REPLENISH.equals(batch.getFileType())) {
+        if (docLike) {
             List<DocHead> docs = docHeadMapper.selectList(new LambdaQueryWrapper<DocHead>()
                     .eq(DocHead::getImportBatchId, batchId));
             List<Long> docIds = docs.stream().map(DocHead::getId).collect(Collectors.toList());
@@ -682,8 +689,9 @@ public class ImportService {
     @Transactional(rollbackFor = Exception.class)
     public ReprocessResp reprocessPending(Long batchId, String operator) {
         ImportBatch batch = mustGetBatch(batchId);
-        if (!ImportBatch.TYPE_SALE.equals(batch.getFileType())) {
-            throw new BizException("只有「出货明细」批次支持重处理待绑定行(补货记录的未绑定行请重新导入原文件)");
+        if (!ImportBatch.TYPE_SALE.equals(batch.getFileType())
+                && !ImportBatch.TYPE_INITIAL_SALE.equals(batch.getFileType())) {
+            throw new BizException("只有「出货明细/期初-历史销售」批次支持重处理待绑定行(补货记录的未绑定行请重新导入原文件)");
         }
         List<SaleRecord> rows = saleRecordMapper.selectList(new LambdaQueryWrapper<SaleRecord>()
                 .eq(SaleRecord::getImportBatchId, batchId).isNull(SaleRecord::getProductId));

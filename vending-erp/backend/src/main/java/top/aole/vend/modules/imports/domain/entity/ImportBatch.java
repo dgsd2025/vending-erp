@@ -18,6 +18,10 @@ public class ImportBatch extends BaseEntity {
     public static final String TYPE_SALE = "出货明细";
     public static final String TYPE_REPLENISH = "系统补货记录";
     public static final String TYPE_PRODUCT_LIST = "商品列表";
+    /** 期初向导三步(M1-6):商品档案+别名 / 历史采购 / 历史销售 */
+    public static final String TYPE_INITIAL_PRODUCT = "期初-商品别名";
+    public static final String TYPE_INITIAL_PURCHASE = "期初-历史采购";
+    public static final String TYPE_INITIAL_SALE = "期初-历史销售";
 
     public static final String STATUS_PROCESSING = "处理中";
     public static final String STATUS_IMPORTED = "已导入";

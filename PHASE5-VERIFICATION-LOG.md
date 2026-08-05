@@ -92,6 +92,15 @@ mysql: healthy
 - 证据:`SELECT COUNT(*) ... table_name LIKE 'yc_vend_%'` → **39**;`flyway_schema_history` → `1.0.0 | init | success=1`;/api/v1/health → `{"code":200,...}`
 - 坑:老 placeholder 残留 target/classes 导致 "Found more than one migration with version 1.0.0",`rm -rf target/classes/db` 后通过
 
+## M1-6 · 移动加权成本引擎 + 报表 + 期初导入向导(2026-08-06)
+
+- 集成测试 `ReportCostEngineTest` 13/13 绿(vend_test_report 库);全仓回归 `mvn test` **73/73 绿**
+- **端到端对平**(vend_e2e_m16 全新库,期初向导三步吃老 Excel 原文件,`verification/scripts/m16_e2e.py` 可复跑):
+  采购 27838.54 / 销售 25113.50 分毫不差;总毛利 **9021.83 vs 基准 9058.42(-0.40% <1% ✅)**;
+  6月 935.86(-0.15%)/ 7月 8085.97(-0.43%)均 <2% ✅;差异全部归因(SP068 无采购史显「—」+ 一码多品拆池)
+- 前端 build ✓ · 浏览器真走 库存页/报表页/期初向导 console 0 错
+- 证据全文见 `verification/M1-6.md`
+
 ## M1-3 · 导入中心三通道(2026-08-06)
 
 - 范围:`modules/imports/`(两步式上传预览→确认入账 · 三通道 · 批次/行错/整批回滚/重处理待绑定/改价侦测)+ `views/Imports.vue` + V1.0.1 迁移(sale_record 补 alias_barcode_raw)

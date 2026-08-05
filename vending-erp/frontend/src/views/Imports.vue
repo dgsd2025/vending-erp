@@ -4,12 +4,18 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import type { UploadRequestOptions } from 'element-plus'
 import {
   importsApi,
+  initialApi,
   type CommitResp,
   type ImportBatch,
   type ImportError,
   type ImportFileType,
+  type InitialStatusResp,
   type PreviewResp,
   type PriceChange,
+  type Step1PreviewResp,
+  type Step2PreviewResp,
+  type Step3PreviewResp,
+  type ValidateResp,
 } from '@/api/imports'
 import AliasPendingDrawer from '@/components/basedata/AliasPendingDrawer.vue'
 
@@ -173,6 +179,117 @@ async function confirmPrices() {
 
 const pendingVisible = ref(false)
 
+// ---------- 期初导入向导(M1-6) ----------
+
+const wizardVisible = ref(false)
+const wizardStatus = ref<InitialStatusResp | null>(null)
+const wizardStep = ref(0) // 0/1/2 = 三步,3 = 对平校验
+const wizardUploading = ref(false)
+const wizardConfirming = ref(false)
+const step1Preview = ref<Step1PreviewResp | null>(null)
+const step2Preview = ref<Step2PreviewResp | null>(null)
+const step3Preview = ref<Step3PreviewResp | null>(null)
+/** 一码多品冲突处理方案:code → split/first */
+const resolutions = ref<Record<string, 'split' | 'first'>>({})
+const expectedPurchase = ref<number>(27838.54)
+const expectedSale = ref<number>(25113.5)
+const validateResult = ref<ValidateResp | null>(null)
+
+async function openWizard() {
+  wizardVisible.value = true
+  await refreshWizardStatus()
+}
+
+async function refreshWizardStatus() {
+  wizardStatus.value = await initialApi.status()
+  const s = wizardStatus.value
+  wizardStep.value = !s.step1.done ? 0 : !s.step2.done ? 1 : !s.step3.done ? 2 : 3
+}
+
+function wizardUploader(step: 1 | 2 | 3) {
+  return async (options: UploadRequestOptions) => {
+    wizardUploading.value = true
+    try {
+      const resp = await initialApi.stepUpload(step, options.file as File)
+      if (step === 1) {
+        step1Preview.value = resp
+        resolutions.value = {}
+        for (const g of resp.conflicts) resolutions.value[g.code] = 'split'
+      } else if (step === 2) {
+        step2Preview.value = resp
+      } else {
+        step3Preview.value = resp
+      }
+    } finally {
+      wizardUploading.value = false
+    }
+  }
+}
+
+async function confirmStep1() {
+  if (!step1Preview.value) return
+  wizardConfirming.value = true
+  try {
+    const r = await initialApi.step1Confirm(
+      step1Preview.value.token,
+      Object.entries(resolutions.value).map(([code, mode]) => ({ code, mode })),
+    )
+    ElMessage.success(
+      `第①步完成:商品 +${r.productCreated}(拆分 ${r.splitProducts})· 机器 +${r.machineCreated} · 别名 ${r.aliasCreated}`,
+    )
+    step1Preview.value = null
+    await refreshWizardStatus()
+    await loadBatches()
+  } finally {
+    wizardConfirming.value = false
+  }
+}
+
+async function confirmStep2() {
+  if (!step2Preview.value) return
+  wizardConfirming.value = true
+  try {
+    const r = await initialApi.step2Confirm(step2Preview.value.token)
+    ElMessage.success(`第②步完成:期初单 ${r.docsCreated} 张 · 明细 ${r.itemCount} 行 · 金额 ¥${r.totalAmt}`)
+    step2Preview.value = null
+    await refreshWizardStatus()
+    await loadBatches()
+  } finally {
+    wizardConfirming.value = false
+  }
+}
+
+async function confirmStep3() {
+  if (!step3Preview.value) return
+  wizardConfirming.value = true
+  try {
+    const r = await initialApi.step3Confirm(step3Preview.value.token)
+    ElMessage.success(`第③步完成:成功 ${r.rowOk} · 重复跳过 ${r.rowDup} · 失败 ${r.rowFail} · 待绑定 ${r.pendingBind}`)
+    step3Preview.value = null
+    await refreshWizardStatus()
+    await loadBatches()
+  } finally {
+    wizardConfirming.value = false
+  }
+}
+
+async function doValidate() {
+  wizardConfirming.value = true
+  try {
+    validateResult.value = await initialApi.validate(expectedPurchase.value, expectedSale.value)
+    if (validateResult.value.pass) {
+      ElMessage.success('✅ 对平通过,期初完成!(op_log 已留痕)')
+    } else {
+      ElMessage.warning('对平未过,请核对差异')
+    }
+  } finally {
+    wizardConfirming.value = false
+  }
+}
+
+const fmtMoney = (v: number | null | undefined) =>
+  v == null ? '—' : Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
 onMounted(loadBatches)
 
 const statusChip = (s: string) => (s === '已导入' ? 'success' : s === '已回滚' ? 'info' : 'warning')
@@ -208,6 +325,21 @@ const statusChip = (s: string) => (s === '已导入' ? 'success' : s === '已回
         </el-upload>
       </el-card>
     </div>
+
+    <!-- 期初导入向导入口(M1-6) -->
+    <el-card shadow="never" class="mb-12px">
+      <div class="flex items-center gap-12px flex-wrap">
+        <div class="text-24px">🧭</div>
+        <div style="flex: 1; min-width: 240px">
+          <b>期初导入向导(上线一次性)</b>
+          <div class="text-12px text-gray-500">
+            老 Excel 进销存套表三步搬家:①商品档案+别名(一码多品清洗)→ ②历史采购(建加权成本历史)→
+            ③历史销售 → 与老账对平才算「期初完成」
+          </div>
+        </div>
+        <el-button type="primary" @click="openWizard">进入向导</el-button>
+      </div>
+    </el-card>
 
     <!-- 上次导入摘要 -->
     <el-card v-if="lastResult" shadow="never" class="mb-12px">
@@ -398,5 +530,173 @@ const statusChip = (s: string) => (s === '已导入' ? 'success' : s === '已回
 
     <!-- 待绑定队列(复用 basedata 组件;绑定后回来点该批"重处理待绑定") -->
     <AliasPendingDrawer v-model:visible="pendingVisible" @changed="loadBatches" />
+
+    <!-- 期初导入向导 -->
+    <el-dialog v-model="wizardVisible" title="🧭 期初导入向导(三步 + 对平)" width="900px" top="4vh">
+      <el-steps :active="wizardStep" finish-status="success" align-center class="mb-16px">
+        <el-step title="① 商品档案+别名" description="一码多品清洗" />
+        <el-step title="② 历史采购" description="建加权成本历史" />
+        <el-step title="③ 历史销售" description="复用通道1去重" />
+        <el-step title="④ 对平校验" description="与老账数字相符" />
+      </el-steps>
+
+      <el-alert type="info" :closable="false" class="mb-12px">
+        <template #title>
+          三步都上传<b>同一个老 Excel 套表原文件</b>(自动按 sheet 名取「商品档案 / 配比底稿 / 采购入库表 / 销售明细」),不用改造文件。
+          已完成的步骤要重做:先到批次历史整批回滚,再回向导重导。
+        </template>
+      </el-alert>
+
+      <!-- 第①步 -->
+      <template v-if="wizardStep === 0">
+        <div v-if="wizardStatus?.step1.done" class="text-13px mb-8px">
+          ✅ 已完成(批次 {{ wizardStatus.step1.batchNo }})
+        </div>
+        <el-upload v-if="!step1Preview" :show-file-list="false" accept=".xlsx" :http-request="wizardUploader(1)" drag>
+          <div class="py-16px text-13px">
+            {{ wizardUploading ? '解析中…' : '拖老 Excel 套表到这里(读「商品档案」+「配比底稿」+「销售明细」)' }}
+          </div>
+        </el-upload>
+        <template v-else>
+          <div class="text-13px mb-8px">
+            解析结果:商品 <b>{{ step1Preview.productCount }}</b> · 别名映射 <b>{{ step1Preview.aliasCount }}</b> ·
+            机器 <b>{{ step1Preview.machineCount }}</b>
+            <span v-if="step1Preview.autoCreateCodes.length" class="text-amber-600">
+              · 档案缺失自动补建:{{ step1Preview.autoCreateCodes.join('、') }}
+            </span>
+          </div>
+          <el-alert v-for="w in step1Preview.warnings" :key="w" type="warning" :title="w" :closable="false" class="mb-6px" />
+          <template v-if="step1Preview.conflicts.length">
+            <el-alert type="error" :closable="false" class="mb-8px"
+              :title="`⚠️ 检出 ${step1Preview.conflicts.length} 组一码多品(老账硬伤)——每组选处理方案,不处理整批不放行`" />
+            <el-table :data="step1Preview.conflicts" size="small" class="mb-8px">
+              <el-table-column prop="code" label="原编码" width="90" />
+              <el-table-column label="同码挂了多个商品" min-width="240">
+                <template #default="{ row }">
+                  <div v-for="(n, i) in row.names" :key="n" class="text-12px">
+                    {{ n }} <span v-if="resolutions[row.code] === 'split'" class="text-green-700">→ {{ row.splitCodes[i] }}</span>
+                  </div>
+                </template>
+              </el-table-column>
+              <el-table-column label="处理方案" width="280">
+                <template #default="{ row }">
+                  <el-radio-group v-model="resolutions[row.code]" size="small">
+                    <el-radio-button value="split">拆分为新码(推荐)</el-radio-button>
+                    <el-radio-button value="first">取首行</el-radio-button>
+                  </el-radio-group>
+                </template>
+              </el-table-column>
+            </el-table>
+          </template>
+          <div class="text-right">
+            <el-button @click="step1Preview = null">重新上传</el-button>
+            <el-button type="primary" :loading="wizardConfirming" @click="confirmStep1">
+              确认第①步 → 建档
+            </el-button>
+          </div>
+        </template>
+      </template>
+
+      <!-- 第②步 -->
+      <template v-else-if="wizardStep === 1">
+        <el-upload v-if="!step2Preview" :show-file-list="false" accept=".xlsx" :http-request="wizardUploader(2)" drag>
+          <div class="py-16px text-13px">
+            {{ wizardUploading ? '解析中…' : '再拖同一个套表文件(读「采购入库表」→ 生成期初采购单据并过账)' }}
+          </div>
+        </el-upload>
+        <template v-else>
+          <div class="text-13px mb-8px">
+            解析结果:<b>{{ step2Preview.rowCount }}</b> 行 · 总数量 <b>{{ step2Preview.totalQty }}</b> ·
+            总金额 <b class="text-green-700">¥{{ fmtMoney(step2Preview.totalAmt) }}</b> ·
+            入库日 {{ step2Preview.dates.join(' / ') }} · 供应商 {{ step2Preview.supplierNames.join('、') }}
+          </div>
+          <el-alert v-for="w in step2Preview.warnings" :key="w" type="error" :title="w" :closable="false" class="mb-6px" />
+          <div v-if="step2Preview.missingProducts.length" class="text-12px text-red-600 mb-8px">
+            档案缺失:{{ step2Preview.missingProducts.slice(0, 8).join('、') }}
+            <span v-if="step2Preview.missingProducts.length > 8">…共 {{ step2Preview.missingProducts.length }} 个</span>
+          </div>
+          <div class="text-right">
+            <el-button @click="step2Preview = null">重新上传</el-button>
+            <el-button type="primary" :disabled="step2Preview.missingProducts.length > 0"
+              :loading="wizardConfirming" @click="confirmStep2">
+              确认第②步 → 期初单过账
+            </el-button>
+          </div>
+        </template>
+      </template>
+
+      <!-- 第③步 -->
+      <template v-else-if="wizardStep === 2">
+        <el-upload v-if="!step3Preview" :show-file-list="false" accept=".xlsx" :http-request="wizardUploader(3)" drag>
+          <div class="py-16px text-13px">
+            {{ wizardUploading ? '解析中…' : '再拖同一个套表文件(读「销售明细」→ 复用通道1入销售记录,订单号去重)' }}
+          </div>
+        </el-upload>
+        <template v-else>
+          <div class="text-13px mb-8px">
+            解析结果:<b>{{ step3Preview.rowCount }}</b> 行 ·
+            总实收 <b class="text-green-700">¥{{ fmtMoney(step3Preview.totalAmt) }}</b>
+          </div>
+          <div class="text-right">
+            <el-button @click="step3Preview = null">重新上传</el-button>
+            <el-button type="primary" :loading="wizardConfirming" @click="confirmStep3">
+              确认第③步 → 入销售记录
+            </el-button>
+          </div>
+        </template>
+      </template>
+
+      <!-- 第④步:对平校验 -->
+      <template v-else>
+        <div class="text-13px mb-12px">
+          三步已完成 ✅ 系统当前:总采购额
+          <b>¥{{ fmtMoney(wizardStatus?.systemPurchaseTotal) }}</b> · 总销售额
+          <b>¥{{ fmtMoney(wizardStatus?.systemSaleTotal) }}</b> —— 与老账数字对平(±0.5 元)才算期初完成。
+        </div>
+        <div class="flex items-center gap-12px flex-wrap mb-12px">
+          <span class="text-13px">老账采购总额</span>
+          <el-input-number v-model="expectedPurchase" :precision="2" :controls="false" style="width: 140px" />
+          <span class="text-13px">老账销售总额</span>
+          <el-input-number v-model="expectedSale" :precision="2" :controls="false" style="width: 140px" />
+          <el-button type="primary" :loading="wizardConfirming" @click="doValidate">对平校验</el-button>
+        </div>
+        <template v-if="validateResult">
+          <el-table :data="[
+            { item: '采购总额', sys: validateResult.systemPurchase, exp: validateResult.expectedPurchase, diff: validateResult.purchaseDiff, pass: validateResult.purchasePass },
+            { item: '销售总额', sys: validateResult.systemSale, exp: validateResult.expectedSale, diff: validateResult.saleDiff, pass: validateResult.salePass },
+          ]" size="small" class="mb-8px">
+            <el-table-column prop="item" label="口径" width="100" />
+            <el-table-column label="系统数" align="right" width="130">
+              <template #default="{ row }">¥{{ fmtMoney(row.sys) }}</template>
+            </el-table-column>
+            <el-table-column label="老账数" align="right" width="130">
+              <template #default="{ row }">¥{{ fmtMoney(row.exp) }}</template>
+            </el-table-column>
+            <el-table-column label="差异" align="right" width="110">
+              <template #default="{ row }">
+                <b :class="row.pass ? 'text-green-700' : 'text-red-600'">{{ fmtMoney(row.diff) }}</b>
+              </template>
+            </el-table-column>
+            <el-table-column label="判定" width="100">
+              <template #default="{ row }">
+                <el-tag :type="row.pass ? 'success' : 'danger'" size="small">{{ row.pass ? '✓ 相符' : '✗ 不符' }}</el-tag>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-alert v-if="validateResult.pass" type="success" :closable="false"
+            title="🎉 期初完成!加权成本历史已建立,去「报表」页看毛利、去「库存」页看两级库存。" />
+          <el-alert v-else type="warning" :closable="false"
+            title="对不平:逐 SKU 与老账毛利对照表比对找原因(常见:漏行/一码多品选错/供应商行遗漏),必要时回滚该步重导。" />
+        </template>
+      </template>
+
+      <template #footer>
+        <span class="text-12px text-gray-400 mr-12px" v-if="wizardStatus">
+          进度:① {{ wizardStatus.step1.done ? '✅' : '待做' }} · ② {{ wizardStatus.step2.done ? '✅' : '待做' }} ·
+          ③ {{ wizardStatus.step3.done ? '✅' : '待做' }}
+        </span>
+        <el-button @click="wizardVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>

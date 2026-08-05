@@ -79,6 +79,52 @@ public class ExcelParser {
         }
     }
 
+    /**
+     * 期初向导专用:按 sheet 名(模糊包含)取整表原始行,索引取值。
+     * 老 Excel 套表存在重复表头(采购入库表两列「商品编码」、配比底稿两对「归集编码」),
+     * 表头名→值 的 Map 会互相覆盖,必须按列索引读(M1-6)。
+     */
+    public RawSheet parseRaw(InputStream in, String sheetNameContains) {
+        try (Workbook wb = new XSSFWorkbook(in)) {
+            Sheet sheet = null;
+            for (int i = 0; i < wb.getNumberOfSheets(); i++) {
+                String name = wb.getSheetName(i);
+                if (name != null && name.contains(sheetNameContains)) {
+                    sheet = wb.getSheetAt(i);
+                    break;
+                }
+            }
+            if (sheet == null) {
+                throw new BizException("文件里找不到工作表「" + sheetNameContains + "」——请上传老 Excel 进销存套表原文件");
+            }
+            RawSheet result = new RawSheet();
+            result.setSheetName(sheet.getSheetName());
+            for (Row row : sheet) {
+                RawSheet.RawRow parsed = new RawSheet.RawRow();
+                parsed.setRowNo(row.getRowNum() + 1);
+                short lastCell = row.getLastCellNum();
+                boolean any = false;
+                for (int c = 0; c < lastCell; c++) {
+                    String text = cellText(row.getCell(c));
+                    text = text == null || text.trim().isEmpty() ? null : text.trim();
+                    parsed.getCells().add(text);
+                    if (text != null) {
+                        any = true;
+                    }
+                }
+                if (any) {
+                    result.getRows().add(parsed);
+                }
+            }
+            if (result.getRows().isEmpty()) {
+                throw new BizException("工作表「" + sheet.getSheetName() + "」内容为空");
+            }
+            return result;
+        } catch (IOException e) {
+            throw new BizException("Excel 解析失败(仅支持 .xlsx):" + e.getMessage());
+        }
+    }
+
     /** 单元格 → 规整文本 */
     private String cellText(Cell cell) {
         if (cell == null) {

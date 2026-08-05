@@ -28,8 +28,12 @@ public interface ImportQueryMapper {
     @Select("SELECT order_no AS orderNo, order_type AS orderType FROM yc_vend_sale_record WHERE is_deleted=0")
     List<Map<String, Object>> existingSaleKeys();
 
-    /** 某月是否已锁账(P0-2:锁后补导 book_period=当月) */
-    @Select("SELECT COUNT(*) FROM yc_vend_period_lock WHERE period=#{period} AND is_deleted=0")
+    /**
+     * 某业务月是否在锁账线内(P0-2:锁后补导 book_period=当月)。
+     * M1-7 接上锁账线语义:锁账=锁定某 YYYY-MM **及之前所有月**,
+     * 所以判定是"存在 period ≥ 该业务月 的锁记录"(锁账线=MAX(period)),而非精确匹配。
+     */
+    @Select("SELECT COUNT(*) FROM yc_vend_period_lock WHERE period >= #{period} AND is_deleted=0")
     int periodLocked(@Param("period") String period);
 
     /** 机器账里该时间戳是否已有流水(通道2防重:同机器+商品+补货时间戳) */
