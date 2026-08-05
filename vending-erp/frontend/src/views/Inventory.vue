@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { reportApi, type StockLedgerRow, type StockResp, type StockRow } from '@/api/report'
 
@@ -9,6 +10,7 @@ import { reportApi, type StockLedgerRow, type StockResp, type StockRow } from '@
  * 库存不能手改——只能被单据改;每个数字点开都是流水。负库存红灯行。
  */
 
+const router = useRouter()
 const loading = ref(false)
 const data = ref<StockResp | null>(null)
 const keyword = ref('')
@@ -77,7 +79,12 @@ async function doRecalc() {
 </script>
 
 <template>
-  <div v-loading="loading">
+  <div class="ledger-page" v-loading="loading">
+    <div class="ledger-crumb">园区小卖 ERP / 日常台账 / 库存管理</div>
+    <div class="ledger-title">
+      <h2>库存管理</h2>
+      <span class="sub">每个商品:在哪、有多少、值多少 —— 一张表说清</span>
+    </div>
     <el-alert type="info" :closable="false" class="mb-12px">
       <template #title>
         库存不能手改——只能被单据改(采购入库/出库上架/销售/盘点/报损),每个数字点开都是流水。
@@ -120,7 +127,7 @@ async function doRecalc() {
       <el-table :data="rows" size="small" :row-class-name="rowClass" max-height="640">
         <el-table-column label="商品" min-width="180" fixed>
           <template #default="{ row }">
-            <b>{{ row.name }}</b>
+            <b class="name-link" @click="router.push(`/products/${row.productId}`)">{{ row.name }} ↗</b>
             <span class="text-11px text-gray-400 ml-4px">{{ row.code }}</span>
             <el-tag v-if="row.productStatus && row.productStatus !== '在售'" size="small" type="warning" class="ml-4px">
               {{ row.productStatus }}
@@ -172,9 +179,10 @@ async function doRecalc() {
             <el-tag v-else type="success" size="small">正常</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="" width="90">
+        <el-table-column label="" width="160">
           <template #default="{ row }">
             <el-button link type="primary" size="small" @click="openLedger(row)">流水 ▸</el-button>
+            <el-button link type="success" size="small" @click="router.push(`/products/${row.productId}`)">单品页 →</el-button>
           </template>
         </el-table-column>
         <template #empty>

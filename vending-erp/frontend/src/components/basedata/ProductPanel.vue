@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   changeProductStatus,
@@ -18,6 +19,7 @@ import AliasPendingDrawer from './AliasPendingDrawer.vue'
  * compact 模式给设置中心 Tab 用(隐藏下钻提示文案)。
  */
 const props = defineProps<{ compact?: boolean }>()
+const router = useRouter()
 
 const rows = ref<Product[]>([])
 const total = ref(0)
@@ -160,7 +162,7 @@ defineExpose({ reload: load })
         </el-table-column>
         <el-table-column label="商品" min-width="180">
           <template #default="{ row }">
-            <b>{{ row.productName }}</b>
+            <b class="name-link" @click="router.push(`/products/${row.id}`)">{{ row.productName }} ↗</b>
             <span v-if="row.legacyCode" class="chip c-gray" style="margin-left: 6px">原码 {{ row.legacyCode }}</span>
           </template>
         </el-table-column>
@@ -197,9 +199,7 @@ defineExpose({ reload: load })
             <el-button v-if="row.productStatus === '在售'" link type="warning" size="small" @click="flip(row, '清仓中')">清仓</el-button>
             <el-button v-if="row.productStatus !== '停售'" link type="danger" size="small" @click="flip(row, '停售')">停售</el-button>
             <el-button v-if="row.productStatus !== '在售'" link type="success" size="small" @click="flip(row, '在售')">恢复</el-button>
-            <el-tooltip content="单品分析详情页 · 里程碑 M1-6 开放" placement="top">
-              <el-button link size="small" disabled>详情 ▸</el-button>
-            </el-tooltip>
+            <el-button link type="success" size="small" @click="router.push(`/products/${row.id}`)">详情 ▸</el-button>
           </template>
         </el-table-column>
       </el-table>

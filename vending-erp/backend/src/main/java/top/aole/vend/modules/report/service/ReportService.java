@@ -12,6 +12,7 @@ import top.aole.vend.modules.basedata.domain.entity.Machine;
 import top.aole.vend.modules.basedata.domain.entity.Product;
 import top.aole.vend.modules.basedata.infrastructure.mapper.MachineMapper;
 import top.aole.vend.modules.basedata.infrastructure.mapper.ProductMapper;
+import top.aole.vend.modules.report.dto.ReportDtos;
 import top.aole.vend.modules.report.dto.ReportDtos.GrossMarginResp;
 import top.aole.vend.modules.report.dto.ReportDtos.GrossMarginRow;
 import top.aole.vend.modules.report.dto.ReportDtos.InventorySummaryResp;
@@ -317,6 +318,297 @@ public class ReportService {
                 "sale=" + saleUpdated + " ledger=" + ledgerUpdated);
         log.info("成本重算回写完成:sale={} ledger={} products={}", saleUpdated, ledgerUpdated,
                 replay.getPools().size());
+        return resp;
+    }
+
+    // ============================== 单品详情(M1-9,只读聚合) ==============================
+
+    /**
+     * 单品体检报告(p14):档案 + 两级库存 + 30 天销量/毛利 + 周走势 + 机器分布 + 采购史。
+     * "今天" = dataAsOf(数据截至水印),30 天窗口与够卖天数都以它为锚——历史数据也能出报告。
+     */
+    public ReportDtos.ProductOverviewResp productOverview(Long productId) {
+        Product p = productMapper.selectById(productId);
+        if (p == null) {
+            throw new BizException("商品不存在:" + productId);
+        }
+        Replay replay = costEngine.replay();
+        java.time.LocalDateTime asOf = reportQueryMapper.dataAsOf();
+
+        ReportDtos.ProductOverviewResp resp = new ReportDtos.ProductOverviewResp();
+        resp.setProductId(p.getId());
+        resp.setSkuCode(p.getSkuCode());
+        resp.setProductName(p.getProductName());
+        resp.setCategory(p.getCategory());
+        resp.setProductStatus(p.getProductStatus());
+        resp.setUnit(p.getUnit());
+        resp.setBoxSpec(p.getBoxSpec());
+        resp.setShelfLifeDays(p.getShelfLifeDays());
+        resp.setRefPrice(p.getRefPrice());
+        resp.setDataAsOf(asOf);
+
+        // ---- 两级库存 ----
+        BigDecimal wh = nvl(stockService.getWarehouseStock(productId));
+        resp.setWarehouseQty(wh);
+        List<Machine> machines = machineMapper.selectList(
+                new LambdaQueryWrapper<Machine>().orderByAsc(Machine::getId));
+        BigDecimal machineSum = BigDecimal.ZERO;
+        Map<Long, BigDecimal> stockByMachine = new LinkedHashMap<>();
+        for (Machine machine : machines) {
+            BigDecimal q = stockService.getMachineStock(machine.getId(), productId);
+            if (q != null && q.signum() != 0) {
+                stockByMachine.put(machine.getId(), q);
+                machineSum = machineSum.add(q);
+            }
+        }
+        resp.setMachineQtyTotal(machineSum);
+        resp.setTotalQty(wh.add(machineSum));
+        Pool pool = replay.getPools().get(productId);
+        BigDecimal unitCost = pool == null ? null : pool.currentAvg();
+        resp.setHasCost(unitCost != null);
+        if (unitCost != null) {
+            resp.setUnitCost(unitCost.setScale(4, RoundingMode.HALF_UP));
+            resp.setStockAmount(scale2(resp.getTotalQty().multiply(unitCost)));
+        }
+
+        // ---- 销售:30 天口径 + 周走势(8 周)+ 机器分布 ----
+        java.time.LocalDateTime win30 = asOf == null ? null : asOf.minusDays(30);
+        java.time.LocalDate weekStart0 = asOf == null ? null
+                : asOf.toLocalDate().minusWeeks(7).with(java.time.DayOfWeek.MONDAY);
+        Map<String, ReportDtos.TrendPoint> weeks = new LinkedHashMap<>();
+        if (weekStart0 != null) {
+            for (int i = 0; i < 8; i++) {
+                String label = weekStart0.plusWeeks(i).toString();
+                ReportDtos.TrendPoint tp = new ReportDtos.TrendPoint();
+                tp.setLabel(label);
+                weeks.put(label, tp);
+            }
+        }
+        Map<Long, ReportDtos.MachineDistRow> dist = new LinkedHashMap<>();
+        BigDecimal cost30 = BigDecimal.ZERO;
+        boolean anyCost30 = false;
+        boolean allCost30 = true;
+        for (top.aole.vend.modules.report.dto.ReportDtos.SaleEvent ev : reportQueryMapper.saleEvents()) {
+            if (!productId.equals(ev.getProductId()) || "测试".equals(ev.getOrderType())) {
+                continue;
+            }
+            BigDecimal saleCost = replay.getSaleCost().get(ev.getId());
+            // 30 天窗口
+            if (win30 != null && !ev.getBizTime().isBefore(win30)) {
+                resp.setSalesQty30(resp.getSalesQty30().add(nvl(ev.getQty())));
+                resp.setSalesAmt30(resp.getSalesAmt30().add(nvl(ev.getAmountReceived())));
+                if (saleCost != null) {
+                    cost30 = cost30.add(saleCost);
+                    anyCost30 = true;
+                } else {
+                    allCost30 = false;
+                }
+                if (ev.getMachineId() != null) {
+                    ReportDtos.MachineDistRow row = dist.computeIfAbsent(ev.getMachineId(), k -> {
+                        ReportDtos.MachineDistRow r = new ReportDtos.MachineDistRow();
+                        r.setMachineId(k);
+                        return r;
+                    });
+                    row.setSalesQty30(row.getSalesQty30().add(nvl(ev.getQty())));
+                }
+            }
+            // 周走势
+            if (weekStart0 != null && !ev.getBizTime().toLocalDate().isBefore(weekStart0)) {
+                String label = ev.getBizTime().toLocalDate().with(java.time.DayOfWeek.MONDAY).toString();
+                ReportDtos.TrendPoint tp = weeks.get(label);
+                if (tp != null) {
+                    tp.setSalesQty(tp.getSalesQty().add(nvl(ev.getQty())));
+                    tp.setSalesAmt(tp.getSalesAmt().add(nvl(ev.getAmountReceived())));
+                    if (saleCost != null) {
+                        tp.setGrossProfit(tp.getGrossProfit().add(nvl(ev.getAmountReceived()).subtract(saleCost)));
+                    }
+                }
+            }
+        }
+        if (anyCost30 && allCost30) {
+            BigDecimal gross = resp.getSalesAmt30().subtract(cost30);
+            resp.setGrossProfit30(scale2(gross));
+            if (resp.getSalesAmt30().signum() != 0) {
+                resp.setMarginPct30(gross.multiply(BigDecimal.valueOf(100))
+                        .divide(resp.getSalesAmt30(), 2, RoundingMode.HALF_UP));
+            }
+        }
+        resp.setSalesAmt30(scale2(resp.getSalesAmt30()));
+        resp.setDailyAvg30(resp.getSalesQty30().divide(BigDecimal.valueOf(30), 1, RoundingMode.HALF_UP));
+        if (resp.getDailyAvg30().signum() > 0 && resp.getTotalQty().signum() > 0) {
+            resp.setDaysOfStock(resp.getTotalQty().divide(resp.getDailyAvg30(), 1, RoundingMode.HALF_UP));
+        }
+        resp.getWeeklyTrend().addAll(weeks.values());
+        // 机器分布补名字 + 现存(含只有库存没销量的机器)
+        for (Machine machine : machines) {
+            BigDecimal stockQ = stockByMachine.get(machine.getId());
+            ReportDtos.MachineDistRow row = dist.get(machine.getId());
+            if (row == null && stockQ == null) {
+                continue;
+            }
+            if (row == null) {
+                row = new ReportDtos.MachineDistRow();
+                row.setMachineId(machine.getId());
+                dist.put(machine.getId(), row);
+            }
+            row.setMachineName(machine.getMachineName());
+            row.setStockQty(stockQ);
+        }
+        resp.getMachineDist().addAll(dist.values());
+        resp.getMachineDist().sort(Comparator.comparing(ReportDtos.MachineDistRow::getSalesQty30,
+                Comparator.reverseOrder()));
+
+        // ---- 采购史(近 10 笔 + 累计) ----
+        List<ReportDtos.PurchaseHistRow> hist = reportQueryMapper.purchaseHist(productId, 10);
+        resp.getPurchaseHist().addAll(hist);
+        for (ReportDtos.PurchaseHistRow h : hist) {
+            resp.setPurchaseTotalQty(resp.getPurchaseTotalQty().add(nvl(h.getQty())));
+            resp.setPurchaseTotalAmt(resp.getPurchaseTotalAmt().add(nvl(h.getAmount())));
+        }
+        resp.setPurchaseTotalAmt(scale2(resp.getPurchaseTotalAmt()));
+        return resp;
+    }
+
+    // ============================== 机器详情(M1-9,只读聚合) ==============================
+
+    /**
+     * 机器体检报告(p15):档案 + 当月销售/毛利 + 14 天走势 + 本机 TOP SKU + 货道 planogram + 补货史。
+     */
+    public ReportDtos.MachineOverviewResp machineOverview(Long machineId) {
+        Machine machine = machineMapper.selectById(machineId);
+        if (machine == null) {
+            throw new BizException("机器不存在:" + machineId);
+        }
+        Replay replay = costEngine.replay();
+        java.time.LocalDateTime asOf = reportQueryMapper.dataAsOf();
+
+        ReportDtos.MachineOverviewResp resp = new ReportDtos.MachineOverviewResp();
+        resp.setMachineId(machine.getId());
+        resp.setMachineCode(machine.getMachineCode());
+        resp.setMachineName(machine.getMachineName());
+        resp.setDeviceId(machine.getDeviceId());
+        resp.setLocation(machine.getLocation());
+        resp.setModel(machine.getModel());
+        resp.setSlotCount(machine.getSlotCount());
+        resp.setMachineStatus(machine.getMachineStatus());
+        resp.setOnlineDate(machine.getOnlineDate() == null ? null : machine.getOnlineDate().toString());
+        resp.setDataAsOf(asOf);
+
+        // 锚点:该机最近一笔销售(没有则退回 dataAsOf)——历史数据也能出"最近有售月"的体检
+        List<top.aole.vend.modules.report.dto.ReportDtos.SaleEvent> allSales = reportQueryMapper.saleEvents();
+        java.time.LocalDateTime lastSale = null;
+        for (top.aole.vend.modules.report.dto.ReportDtos.SaleEvent ev : allSales) {
+            if (machineId.equals(ev.getMachineId()) && !"测试".equals(ev.getOrderType())
+                    && (lastSale == null || ev.getBizTime().isAfter(lastSale))) {
+                lastSale = ev.getBizTime();
+            }
+        }
+        java.time.LocalDateTime anchor = lastSale != null ? lastSale : asOf;
+        String month = anchor == null ? null : anchor.toLocalDate().toString().substring(0, 7);
+        resp.setMonth(month);
+
+        // ---- 当月销售/毛利 + 全场占比 + 14 天走势 + 30 天 TOP SKU ----
+        java.time.LocalDate day0 = anchor == null ? null : anchor.toLocalDate().minusDays(13);
+        Map<String, ReportDtos.TrendPoint> days = new LinkedHashMap<>();
+        if (day0 != null) {
+            for (int i = 0; i < 14; i++) {
+                String label = day0.plusDays(i).toString();
+                ReportDtos.TrendPoint tp = new ReportDtos.TrendPoint();
+                tp.setLabel(label);
+                days.put(label, tp);
+            }
+        }
+        java.time.LocalDateTime win30 = anchor == null ? null : anchor.minusDays(30);
+        Map<Long, ReportDtos.SkuSalesRow> topMap = new LinkedHashMap<>();
+        BigDecimal monthCost = BigDecimal.ZERO;
+        boolean anyMonthCost = false;
+        BigDecimal allSalesInMonth = BigDecimal.ZERO;
+        java.util.Set<java.time.LocalDate> saleDays = new java.util.HashSet<>();
+        for (top.aole.vend.modules.report.dto.ReportDtos.SaleEvent ev : allSales) {
+            if ("测试".equals(ev.getOrderType())) {
+                continue;
+            }
+            boolean inMonth = month != null && month.equals(ev.getBizPeriod());
+            if (inMonth) {
+                allSalesInMonth = allSalesInMonth.add(nvl(ev.getAmountReceived()));
+            }
+            if (!machineId.equals(ev.getMachineId())) {
+                continue;
+            }
+            BigDecimal saleCost = replay.getSaleCost().get(ev.getId());
+            if (inMonth) {
+                resp.setMonthSalesAmt(resp.getMonthSalesAmt().add(nvl(ev.getAmountReceived())));
+                resp.setMonthSalesQty(resp.getMonthSalesQty().add(nvl(ev.getQty())));
+                if (saleCost != null) {
+                    monthCost = monthCost.add(saleCost);
+                    anyMonthCost = true;
+                }
+                saleDays.add(ev.getBizTime().toLocalDate());
+            }
+            if (day0 != null && !ev.getBizTime().toLocalDate().isBefore(day0)) {
+                ReportDtos.TrendPoint tp = days.get(ev.getBizTime().toLocalDate().toString());
+                if (tp != null) {
+                    tp.setSalesQty(tp.getSalesQty().add(nvl(ev.getQty())));
+                    tp.setSalesAmt(tp.getSalesAmt().add(nvl(ev.getAmountReceived())));
+                    if (saleCost != null) {
+                        tp.setGrossProfit(tp.getGrossProfit().add(nvl(ev.getAmountReceived()).subtract(saleCost)));
+                    }
+                }
+            }
+            if (win30 != null && !ev.getBizTime().isBefore(win30) && ev.getProductId() != null) {
+                ReportDtos.SkuSalesRow row = topMap.computeIfAbsent(ev.getProductId(), k -> {
+                    ReportDtos.SkuSalesRow r = new ReportDtos.SkuSalesRow();
+                    r.setProductId(k);
+                    return r;
+                });
+                row.setSalesQty30(row.getSalesQty30().add(nvl(ev.getQty())));
+                row.setSalesAmt30(row.getSalesAmt30().add(nvl(ev.getAmountReceived())));
+            }
+        }
+        resp.setMonthSalesAmt(scale2(resp.getMonthSalesAmt()));
+        if (anyMonthCost) {
+            BigDecimal gross = resp.getMonthSalesAmt().subtract(monthCost);
+            resp.setMonthGrossProfit(scale2(gross));
+            if (resp.getMonthSalesAmt().signum() != 0) {
+                resp.setMonthMarginPct(gross.multiply(BigDecimal.valueOf(100))
+                        .divide(resp.getMonthSalesAmt(), 2, RoundingMode.HALF_UP));
+            }
+        }
+        if (allSalesInMonth.signum() != 0) {
+            resp.setSalesSharePct(resp.getMonthSalesAmt().multiply(BigDecimal.valueOf(100))
+                    .divide(allSalesInMonth, 1, RoundingMode.HALF_UP));
+        }
+        if (!saleDays.isEmpty()) {
+            resp.setDailyAvgAmt(resp.getMonthSalesAmt()
+                    .divide(BigDecimal.valueOf(saleDays.size()), 2, RoundingMode.HALF_UP));
+        }
+        resp.getDailyTrend().addAll(days.values());
+
+        // TOP SKU 补名字,取前 8
+        Map<Long, Product> products = loadProducts();
+        List<ReportDtos.SkuSalesRow> tops = new ArrayList<>(topMap.values());
+        tops.sort(Comparator.comparing(ReportDtos.SkuSalesRow::getSalesQty30, Comparator.reverseOrder()));
+        for (ReportDtos.SkuSalesRow row : tops) {
+            Product p = products.get(row.getProductId());
+            row.setProductName(p == null ? "SKU#" + row.getProductId() : p.getProductName());
+            row.setSkuCode(p == null ? "" : p.getSkuCode());
+        }
+        resp.getTopSkus().addAll(tops.subList(0, Math.min(8, tops.size())));
+
+        // ---- 机内库存(推算)+ 货道 planogram + 补货史 ----
+        BigDecimal stockSum = BigDecimal.ZERO;
+        for (BigDecimal q : stockService.getMachineStockAll(machineId).values()) {
+            stockSum = stockSum.add(nvl(q));
+        }
+        resp.setMachineStockQty(stockSum);
+        List<ReportDtos.SlotRow> slots = reportQueryMapper.machineSlots(machineId);
+        resp.getSlots().addAll(slots);
+        BigDecimal cap = BigDecimal.ZERO;
+        for (ReportDtos.SlotRow s : slots) {
+            cap = cap.add(nvl(s.getCapacity()));
+        }
+        resp.setCapacityTotal(cap);
+        resp.getTransferHist().addAll(reportQueryMapper.machineTransferHist(machineId, 10));
         return resp;
     }
 

@@ -124,6 +124,15 @@
   letter-spacing: 1px;
 }
 
+/* 名词下钻链接(七律#3:任何名词都能点进去) */
+.name-link {
+  color: var(--green);
+  cursor: pointer;
+}
+.name-link:hover {
+  text-decoration: underline;
+}
+
 /* 筛选 chip 行(p3 顶部风格):可点选 */
 .filter-chip {
   cursor: pointer;

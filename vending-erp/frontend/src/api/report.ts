@@ -102,6 +102,118 @@ export interface RecalcResp {
   products: number
 }
 
+// ---------- 单品/机器详情聚合(M1-9) ----------
+
+export interface TrendPoint {
+  label: string
+  salesQty: number
+  salesAmt: number
+  grossProfit: number | null
+}
+
+export interface MachineDistRow {
+  machineId: number
+  machineName: string
+  salesQty30: number
+  stockQty: number | null
+}
+
+export interface PurchaseHistRow {
+  bizTime: string
+  docNo: string
+  docType: string
+  supplierName: string | null
+  qty: number
+  unitCost: number | null
+  amount: number | null
+}
+
+export interface ProductOverviewResp {
+  productId: number
+  skuCode: string
+  productName: string
+  category: string | null
+  productStatus: string | null
+  unit: string | null
+  boxSpec: number | null
+  shelfLifeDays: number | null
+  refPrice: number | null
+  warehouseQty: number
+  machineQtyTotal: number
+  totalQty: number
+  unitCost: number | null
+  stockAmount: number | null
+  hasCost: boolean
+  salesQty30: number
+  salesAmt30: number
+  grossProfit30: number | null
+  marginPct30: number | null
+  dailyAvg30: number
+  daysOfStock: number | null
+  weeklyTrend: TrendPoint[]
+  machineDist: MachineDistRow[]
+  purchaseHist: PurchaseHistRow[]
+  purchaseTotalQty: number
+  purchaseTotalAmt: number
+  dataAsOf: string | null
+}
+
+export interface SlotRow {
+  slotId: number
+  slotNo: string
+  productId: number | null
+  productName: string | null
+  skuCode: string | null
+  capacity: number | null
+  currentQty: number | null
+  slotStatus: string | null
+}
+
+export interface SkuSalesRow {
+  productId: number
+  skuCode: string
+  productName: string
+  salesQty30: number
+  salesAmt30: number
+}
+
+export interface TransferHistRow {
+  docId: number
+  docNo: string
+  docType: string
+  docStatus: string
+  bizDate: string
+  sourceType: string
+  itemCount: number
+  totalQty: number
+}
+
+export interface MachineOverviewResp {
+  machineId: number
+  machineCode: string
+  machineName: string
+  deviceId: string
+  location: string | null
+  model: string | null
+  slotCount: number | null
+  machineStatus: string | null
+  onlineDate: string | null
+  month: string | null
+  monthSalesAmt: number
+  monthSalesQty: number
+  monthGrossProfit: number | null
+  monthMarginPct: number | null
+  salesSharePct: number | null
+  dailyAvgAmt: number
+  machineStockQty: number
+  capacityTotal: number
+  dailyTrend: TrendPoint[]
+  topSkus: SkuSalesRow[]
+  slots: SlotRow[]
+  transferHist: TransferHistRow[]
+  dataAsOf: string | null
+}
+
 export const reportApi = {
   grossMargin: (month: string | undefined, dim: 'sku' | 'machine') =>
     request.get<never, GrossMarginResp>('/v1/report/gross-margin', { params: { month, dim } }),
@@ -111,4 +223,8 @@ export const reportApi = {
   productLedger: (productId: number, limit = 100) =>
     request.get<never, StockLedgerRow[]>(`/v1/report/stock/${productId}/ledger`, { params: { limit } }),
   recalc: () => request.post<never, RecalcResp>('/v1/report/cost/recalc'),
+  productOverview: (productId: number) =>
+    request.get<never, ProductOverviewResp>(`/v1/report/product/${productId}/overview`),
+  machineOverview: (machineId: number) =>
+    request.get<never, MachineOverviewResp>(`/v1/report/machine/${machineId}/overview`),
 }

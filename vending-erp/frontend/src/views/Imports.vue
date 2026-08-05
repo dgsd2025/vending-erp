@@ -296,7 +296,12 @@ const statusChip = (s: string) => (s === '已导入' ? 'success' : s === '已回
 </script>
 
 <template>
-  <div>
+  <div class="ledger-page">
+    <div class="ledger-crumb">园区小卖 ERP / 日常台账 / 导入中心</div>
+    <div class="ledger-title">
+      <h2>导入中心</h2>
+      <span class="sub">货流两段式:出货明细回流销售账,补货记录生成转移单,商品列表挂别名</span>
+    </div>
     <!-- ⚡ 任务来源 + 编号流程条(设计思维律②:领着人干活) -->
     <el-alert type="info" :closable="false" class="mb-12px">
       <template #title>

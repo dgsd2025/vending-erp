@@ -176,4 +176,146 @@ public final class ReportDtos {
         private int ledgerUpdated;
         private int products;
     }
+
+    // ============================== 单品详情(M1-9,p14 体检报告) ==============================
+
+    /** 趋势点(周/日通用):label=周一日期或天日期 */
+    @Data
+    public static class TrendPoint {
+        private String label;
+        private BigDecimal salesQty = BigDecimal.ZERO;
+        private BigDecimal salesAmt = BigDecimal.ZERO;
+        /** 毛利(无成本销售不计,null=该期全无成本) */
+        private BigDecimal grossProfit = BigDecimal.ZERO;
+    }
+
+    /** 机器分布行(30 天销量 / 现存) */
+    @Data
+    public static class MachineDistRow {
+        private Long machineId;
+        private String machineName;
+        private BigDecimal salesQty30 = BigDecimal.ZERO;
+        /** 该机现存(锚点+增量推算) */
+        private BigDecimal stockQty;
+    }
+
+    /** 采购史行(来自 采购入库/期初 已过账流水) */
+    @Data
+    public static class PurchaseHistRow {
+        private LocalDateTime bizTime;
+        private String docNo;
+        private String docType;
+        private String supplierName;
+        private BigDecimal qty;
+        private BigDecimal unitCost;
+        private BigDecimal amount;
+    }
+
+    @Data
+    public static class ProductOverviewResp {
+        // 档案
+        private Long productId;
+        private String skuCode;
+        private String productName;
+        private String category;
+        private String productStatus;
+        private String unit;
+        private BigDecimal boxSpec;
+        private Integer shelfLifeDays;
+        private BigDecimal refPrice;
+        // 库存两级
+        private BigDecimal warehouseQty;
+        private BigDecimal machineQtyTotal;
+        private BigDecimal totalQty;
+        private BigDecimal unitCost;
+        private BigDecimal stockAmount;
+        private boolean hasCost = true;
+        // 30 天口径(以 dataAsOf 为"今天")
+        private BigDecimal salesQty30 = BigDecimal.ZERO;
+        private BigDecimal salesAmt30 = BigDecimal.ZERO;
+        private BigDecimal grossProfit30;
+        private BigDecimal marginPct30;
+        private BigDecimal dailyAvg30 = BigDecimal.ZERO;
+        /** 够卖天数 = 合计现存 ÷ 日均(日均 0 → null 显「—」) */
+        private BigDecimal daysOfStock;
+        // 走势 + 分布 + 采购史
+        private List<TrendPoint> weeklyTrend = new ArrayList<>();
+        private List<MachineDistRow> machineDist = new ArrayList<>();
+        private List<PurchaseHistRow> purchaseHist = new ArrayList<>();
+        private BigDecimal purchaseTotalQty = BigDecimal.ZERO;
+        private BigDecimal purchaseTotalAmt = BigDecimal.ZERO;
+        private LocalDateTime dataAsOf;
+    }
+
+    // ============================== 机器详情(M1-9,p15) ==============================
+
+    /** 货道行(planogram 格子) */
+    @Data
+    public static class SlotRow {
+        private Long slotId;
+        private String slotNo;
+        private Long productId;
+        private String productName;
+        private String skuCode;
+        private BigDecimal capacity;
+        private BigDecimal currentQty;
+        private String slotStatus;
+    }
+
+    /** 本机 SKU 销量行(30 天 TOP) */
+    @Data
+    public static class SkuSalesRow {
+        private Long productId;
+        private String skuCode;
+        private String productName;
+        private BigDecimal salesQty30 = BigDecimal.ZERO;
+        private BigDecimal salesAmt30 = BigDecimal.ZERO;
+    }
+
+    /** 补货史行(该机转移单:出库上架/退库) */
+    @Data
+    public static class TransferHistRow {
+        private Long docId;
+        private String docNo;
+        private String docType;
+        private String docStatus;
+        private java.time.LocalDate bizDate;
+        private String sourceType;
+        private int itemCount;
+        private BigDecimal totalQty;
+    }
+
+    @Data
+    public static class MachineOverviewResp {
+        // 档案
+        private Long machineId;
+        private String machineCode;
+        private String machineName;
+        private String deviceId;
+        private String location;
+        private String model;
+        private Integer slotCount;
+        private String machineStatus;
+        private String onlineDate;
+        // 当月(dataAsOf 所在月)经营
+        private String month;
+        private BigDecimal monthSalesAmt = BigDecimal.ZERO;
+        private BigDecimal monthSalesQty = BigDecimal.ZERO;
+        private BigDecimal monthGrossProfit;
+        private BigDecimal monthMarginPct;
+        /** 全场占比 %(本机当月销售额 ÷ 全场当月销售额) */
+        private BigDecimal salesSharePct;
+        private BigDecimal dailyAvgAmt = BigDecimal.ZERO;
+        // 机内库存(推算合计 / 货道容量合计)
+        private BigDecimal machineStockQty = BigDecimal.ZERO;
+        private BigDecimal capacityTotal = BigDecimal.ZERO;
+        // 近 14 天走势(以 dataAsOf 为终点)
+        private List<TrendPoint> dailyTrend = new ArrayList<>();
+        // 本机 SKU 销量 TOP(30 天)
+        private List<SkuSalesRow> topSkus = new ArrayList<>();
+        // 货道 planogram + 补货史
+        private List<SlotRow> slots = new ArrayList<>();
+        private List<TransferHistRow> transferHist = new ArrayList<>();
+        private LocalDateTime dataAsOf;
+    }
 }

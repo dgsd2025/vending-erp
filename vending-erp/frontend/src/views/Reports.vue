@@ -49,7 +49,12 @@ const fmtQty = (v: number | null | undefined) => (v == null ? '—' : Number(v).
 </script>
 
 <template>
-  <div>
+  <div class="ledger-page">
+    <div class="ledger-crumb">园区小卖 ERP / BI 经营分析 / 报表</div>
+    <div class="ledger-title">
+      <h2>报表</h2>
+      <span class="sub">毛利报表(SKU / 机器两维)+ 月度进销存汇总</span>
+    </div>
     <el-alert type="info" :closable="false" class="mb-12px">
       <template #title>
         口径写死(§13):毛利 = <b>实收金额 − 移动加权成本</b> · 销售额 = 正常 + 退款(负) ·

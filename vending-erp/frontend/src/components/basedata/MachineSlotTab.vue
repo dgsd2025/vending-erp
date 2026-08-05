@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   changeMachineStatus,
@@ -18,6 +19,7 @@ import ProductSelect from './ProductSelect.vue'
  * 机器与货道 Tab(对照 mockup p12 左卡):
  * 机器 CRUD(后台设备ID唯一)+ 停用;货道抽屉:按机器列货道 / 绑SKU / 容量 / 批量初始化。
  */
+const router = useRouter()
 const rows = ref<Machine[]>([])
 const total = ref(0)
 const loading = ref(false)
@@ -159,7 +161,9 @@ onMounted(load)
           <template #default="{ row }"><span class="num mini">{{ row.machineCode }}</span></template>
         </el-table-column>
         <el-table-column prop="machineName" label="机器" min-width="120">
-          <template #default="{ row }"><b>{{ row.machineName }}</b></template>
+          <template #default="{ row }">
+            <b class="name-link" @click="router.push(`/machines/${row.id}`)">{{ row.machineName }} ↗</b>
+          </template>
         </el-table-column>
         <el-table-column prop="deviceId" label="后台设备ID" min-width="150">
           <template #default="{ row }"><span class="num mini">{{ row.deviceId }}</span></template>
@@ -173,8 +177,9 @@ onMounted(load)
             <span class="chip" :class="statusChip(row.machineStatus)">{{ row.machineStatus }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="230">
+        <el-table-column label="操作" width="280">
           <template #default="{ row }">
+            <el-button link type="success" size="small" @click="router.push(`/machines/${row.id}`)">详情 ▸</el-button>
             <el-button link type="primary" size="small" @click="openSlots(row)">货道配置</el-button>
             <el-button link size="small" @click="openEdit(row)">编辑</el-button>
             <el-button v-if="row.machineStatus !== '停用'" link type="danger" size="small" @click="flip(row, '停用')">停用</el-button>

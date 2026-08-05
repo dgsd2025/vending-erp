@@ -57,6 +57,18 @@ public class ReportController {
         return R.ok(reportService.productLedger(productId, limit));
     }
 
+    @ApiOperation("单品详情聚合(M1-9,p14 体检报告):档案+两级库存+30天销量毛利+周走势+机器分布+采购史(只读)")
+    @GetMapping("/product/{productId}/overview")
+    public R<ReportDtos.ProductOverviewResp> productOverview(@PathVariable Long productId) {
+        return R.ok(reportService.productOverview(productId));
+    }
+
+    @ApiOperation("机器详情聚合(M1-9,p15):档案+当月销售毛利+14天走势+TOP SKU+货道 planogram+补货史(只读)")
+    @GetMapping("/machine/{machineId}/overview")
+    public R<ReportDtos.MachineOverviewResp> machineOverview(@PathVariable Long machineId) {
+        return R.ok(reportService.machineOverview(machineId));
+    }
+
     @ApiOperation("成本重算回写:sale_record.cost_amount + ledger 出库/转移行成本快照(附录C)")
     @PostMapping("/cost/recalc")
     public R<ReportDtos.RecalcResp> recalc(
