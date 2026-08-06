@@ -25,6 +25,10 @@
         <druid.version>1.2.20</druid.version>
         <knife4j.version>4.3.0</knife4j.version>
         <hutool.version>5.8.25</hutool.version>
+        <!-- 并行票隔离(M3-5 坑1):默认仍是 ./target;并行开发时各票传
+             -Dmaven.build.directory=<独立目录> 即可真正生效(超级 POM 写死 target,
+             不挂到 <build><directory> 该参数是空转的)。 -->
+        <maven.build.directory>${project.basedir}/target</maven.build.directory>
     </properties>
 
     <dependencies>
@@ -109,6 +113,7 @@
     </dependencies>
 
     <build>
+        <directory>${maven.build.directory}</directory>
         <plugins>
             <!-- 显式声明 Lombok 注解处理器:JDK 23+ 默认关闭注解处理,不声明会编译报 cannot find symbol -->
             <plugin>

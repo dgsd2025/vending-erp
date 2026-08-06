@@ -6,6 +6,7 @@ import {
   type GrossMarginResp,
   type InventorySummaryResp,
 } from '@/api/report'
+import { finreportApi, type ProfitResp } from '@/api/finreport'
 
 /**
  * 报表页(M1-6):毛利报表(月份切换 × SKU/机器两维)+ 月度进销存汇总。
@@ -17,34 +18,46 @@ const router = useRouter()
 
 const month = ref<string>('')
 const months = ref<string[]>([])
-const activeTab = ref<'sku' | 'machine' | 'inventory'>('sku')
+const activeTab = ref<'sku' | 'machine' | 'inventory' | 'profit'>('sku')
 
 const gmLoading = ref(false)
 const gmSku = ref<GrossMarginResp | null>(null)
 const gmMachine = ref<GrossMarginResp | null>(null)
 const invLoading = ref(false)
 const inv = ref<InventorySummaryResp | null>(null)
+const profitLoading = ref(false)
+const profit = ref<ProfitResp | null>(null)
 
 async function loadAll() {
   gmLoading.value = true
   invLoading.value = true
+  profitLoading.value = true
   try {
-    const [sku, machine, summary] = await Promise.all([
+    const [sku, machine, summary, pl] = await Promise.all([
       reportApi.grossMargin(month.value || undefined, 'sku'),
       reportApi.grossMargin(month.value || undefined, 'machine'),
       reportApi.inventorySummary(month.value || undefined),
+      finreportApi.profit(month.value || undefined),
     ])
     gmSku.value = sku
     gmMachine.value = machine
     inv.value = summary
-    months.value = sku.months
-    if (!month.value) month.value = sku.month
+    profit.value = pl
+    // 月份候选 = 销售口径月 ∪ 利润表入账月(利润表可能只有流水没销售)
+    months.value = Array.from(new Set([...sku.months, ...pl.months])).sort()
+    if (!month.value) month.value = sku.month || pl.period
   } finally {
     gmLoading.value = false
     invLoading.value = false
+    profitLoading.value = false
   }
 }
 onMounted(loadAll)
+
+/** 利润表行样式:小计/合计加粗描边 */
+function plRowClass(scope: { row: { subtotal: boolean } }) {
+  return scope.row.subtotal ? 'pl-subtotal-row' : ''
+}
 
 const fmt = (v: number | null | undefined, dash = '—') =>
   v == null ? dash : Number(v).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })
@@ -246,7 +259,67 @@ const fmtQty = (v: number | null | undefined) => (v == null ? '—' : Number(v).
             期末 {{ fmtQty(inv.total.closingQty) }} 件 / <b>¥{{ fmt(inv.total.closingAmt) }}</b>
           </div>
         </el-tab-pane>
+
+        <!-- 简版利润表(M3-6) -->
+        <el-tab-pane label="利润表" name="profit">
+          <p class="text-12px text-gray-500 mt-0">
+            口径 §13.1(效力最高):毛利 − 平台手续费 − 杂费 − 损耗 ± 成本调整 + 其他收入 ± 上期调整 =
+            <b>经营利润</b>;按<b>入账月</b>聚合,每类资金流水在利润表有且只有一个去处。
+          </p>
+          <el-alert v-if="profit?.settleBanner" type="warning" :closable="false" class="mb-8px">
+            <template #title>{{ profit.settleBanner }}</template>
+          </el-alert>
+          <el-alert v-if="profit?.locked" type="info" :closable="false" class="mb-8px">
+            <template #title>🔒 {{ profit.lockedNote }}</template>
+          </el-alert>
+          <el-alert v-for="d in profit?.lockDiffNotes ?? []" :key="d.settlementId" type="warning" :closable="false" class="mb-8px">
+            <template #title>
+              ⚠️ 结算单 {{ d.stmtNo }}({{ d.periodStart }} ~ {{ d.periodEnd }} · {{ d.stlStatus }}):{{ d.note }}
+            </template>
+          </el-alert>
+
+          <el-table :data="profit?.rows ?? []" v-loading="profitLoading" size="small"
+                    :row-class-name="plRowClass" :show-header="true">
+            <el-table-column label="项目" min-width="140">
+              <template #default="{ row }">
+                <b v-if="row.subtotal">{{ row.label }}</b>
+                <span v-else>{{ row.label }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="金额(+增利 / −减利)" align="right" width="160">
+              <template #default="{ row }">
+                <b :class="Number(row.amount) < 0 ? 'text-red-600' : 'text-green-700'">
+                  {{ Number(row.amount) < 0 ? '−' : '' }}¥{{ fmt(Math.abs(Number(row.amount))) }}
+                </b>
+              </template>
+            </el-table-column>
+            <el-table-column label="这行是什么(人话)" min-width="300">
+              <template #default="{ row }">
+                <span class="text-12px text-gray-500">{{ row.note }}</span>
+              </template>
+            </el-table-column>
+            <template #empty>
+              <el-empty description="本月还没有可入表的销售或资金流水" :image-size="60" />
+            </template>
+          </el-table>
+          <div class="text-12px text-gray-600 mt-8px" v-if="profit">
+            {{ profit.period }} 经营利润
+            <b :class="Number(profit.operatingProfit) < 0 ? 'text-red-600' : 'text-green-700'">
+              ¥{{ fmt(profit.operatingProfit) }}
+            </b>
+            <span class="text-gray-400">
+              · 另有本金往来(付货款/结算划转/互转/资金调整)净额 ¥{{ fmt(profit.nonPlNet) }},只动家底不动损益
+            </span>
+          </div>
+        </el-tab-pane>
       </el-tabs>
     </el-card>
   </div>
 </template>
+
+<style scoped>
+:deep(.pl-subtotal-row) {
+  background: var(--green-soft);
+  font-weight: 600;
+}
+</style>

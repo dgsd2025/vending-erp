@@ -18,6 +18,7 @@ const router = createRouter({
     { path: '/tasks', name: 'tasks', meta: { title: '任务日历' }, component: () => import('@/views/TaskCalendar.vue') },
     { path: '/replenish', name: 'replenish', meta: { title: 'AI 补货' }, component: () => import('@/views/Replenish.vue') },
     { path: '/suppliers', name: 'suppliers', meta: { title: '供应商往来' }, component: () => import('@/views/Suppliers.vue') },
+    { path: '/assets', name: 'assets', meta: { title: '资产家底' }, component: () => import('@/views/Assets.vue') },
     { path: '/staff/:name', name: 'staff-detail', meta: { title: '员工详情' }, component: () => import('@/views/StaffDetail.vue') },
     // ⚠️ M3-4 临时 dev 验证台(生产构建不注册):三组件在 p7 装配(M3-7)前的真浏览器验证入口,装配后删除
     ...(import.meta.env.DEV

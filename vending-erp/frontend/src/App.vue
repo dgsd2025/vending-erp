@@ -39,6 +39,7 @@ const groups: { label?: string; items: { path?: string; ico: string; title: stri
     items: [
       { ico: '💰', title: '资金与对账', milestone: 'M3' },
       { path: '/suppliers', ico: '🏭', title: '供应商往来' },
+      { path: '/assets', ico: '🏦', title: '资产家底' },
     ],
   },
   {

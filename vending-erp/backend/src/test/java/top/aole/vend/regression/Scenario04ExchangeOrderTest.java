@@ -1,19 +1,37 @@
 package top.aole.vend.regression;
 
-import org.junit.jupiter.api.Disabled;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
 import top.aole.vend.common.exception.BizException;
 import top.aole.vend.modules.basedata.domain.entity.Machine;
 import top.aole.vend.modules.basedata.domain.entity.Product;
+import top.aole.vend.modules.basedata.domain.entity.Supplier;
+import top.aole.vend.modules.basedata.infrastructure.mapper.SupplierMapper;
 import top.aole.vend.modules.doc.domain.enums.DocType;
 import top.aole.vend.modules.doc.service.DocService;
+import top.aole.vend.modules.money.dto.MoneyDtos;
+import top.aole.vend.modules.money.service.AccountService;
+import top.aole.vend.modules.money.service.AttachmentService;
+import top.aole.vend.modules.money.service.SettleModeService;
 import top.aole.vend.modules.report.service.CostEngine;
+import top.aole.vend.modules.settle.domain.entity.SettleBill;
+import top.aole.vend.modules.settle.dto.SettleDtos;
+import top.aole.vend.modules.settle.mapper.DeductionMapper;
+import top.aole.vend.modules.settle.mapper.SettleBillMapper;
+import top.aole.vend.modules.settle.service.DeductionService;
+import top.aole.vend.modules.settle.service.SettleBillService;
+import top.aole.vend.modules.settlement.domain.entity.Settlement;
+import top.aole.vend.modules.settlement.dto.SettlementDtos;
+import top.aole.vend.modules.settlement.mapper.SettlementMapper;
+import top.aole.vend.modules.settlement.service.SettlementService;
+import top.aole.vend.modules.stock.domain.entity.SaleRecord;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.util.Collections;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -26,6 +44,26 @@ class Scenario04ExchangeOrderTest extends RegressionSupport {
 
     @Autowired
     private CostEngine costEngine;
+    @Autowired
+    private SettlementService settlementService;
+    @Autowired
+    private SettlementMapper settlementMapper;
+    @Autowired
+    private SettleModeService settleModeService;
+    @Autowired
+    private AccountService accountService;
+    @Autowired
+    private AttachmentService attachmentService;
+    @Autowired
+    private SupplierMapper supplierMapper;
+    @Autowired
+    private DeductionService deductionService;
+    @Autowired
+    private DeductionMapper deductionMapper;
+    @Autowired
+    private SettleBillMapper settleBillMapper;
+    @Autowired
+    private SettleBillService settleBillService;
 
     private static final LocalDate DAY = LocalDate.of(2026, 6, 2);
 
@@ -109,14 +147,103 @@ class Scenario04ExchangeOrderTest extends RegressionSupport {
     }
 
     @Test
-    @Disabled("M3-pending:平台结算单服务未实现——缺\"settlement.system_amount 聚合仅 order_type=正常/退款(兑换不入待结算虚账)\"的业务断言;销售额口径已在本类第一例经成本引擎验过")
+    @DisplayName("三口径之结算口径(M3-3 转绿):平台结算单 system_amount 只聚合 正常+退款负,兑换/测试不入待结算虚账,回填也只碰正常/退款")
     void settlementSystemAmountExcludesExchange() {
-        // M3 实装后:预生成平台结算单 → system_amount 只含正常+退款负
+        Object[] ctx = setup();
+        Machine m = (Machine) ctx[0];
+        Product p = (Product) ctx[1];
+
+        SaleRecord normal = sale(m.getId(), p.getId(), "1", "5.0", "正常", DAY.atTime(10, 0));
+        SaleRecord exchange = sale(m.getId(), p.getId(), "2", "7.0", "兑换", DAY.atTime(11, 0));  // 哪怕导出带金额7
+        SaleRecord refund = sale(m.getId(), p.getId(), "1", "-3.0", "退款", DAY.atTime(12, 0));
+        sale(m.getId(), p.getId(), "1", "99.0", "测试", DAY.atTime(13, 0));
+
+        // 定型 PLATFORM(附录D)→ 录入平台结算单(区间=兑换活动当天)→ 平台账单凭证 → 确认
+        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, OPERATOR);
+        MoneyDtos.AccountCreateReq accReq = new MoneyDtos.AccountCreateReq();
+        accReq.setAccountName("微信-场景4-" + SEQ.incrementAndGet());
+        accReq.setAccountType("微信");
+        Long acc = accountService.create(accReq, OP, OPERATOR);
+
+        SettlementDtos.BillCreateReq req = new SettlementDtos.BillCreateReq();
+        req.setPeriodStart(DAY);
+        req.setPeriodEnd(DAY);
+        req.setPlatformAmount(new BigDecimal("2.0"));
+        req.setFeeAmount(new BigDecimal("0.2"));
+        req.setActualAmount(new BigDecimal("1.8"));
+        req.setAccountId(acc);
+        Long billId = settlementService.create(req, OP, OPERATOR);
+        attachmentService.upload("settlement", billId, "平台账单", "场景4账单.png",
+                new byte[]{1, 2, 3}, OP, OPERATOR);
+        SettlementDtos.ConfirmResult r = settlementService.confirm(billId, OP, OPERATOR);
+
+        // 审计结论修复点:兑换的 7 与测试的 99 都不进 system_amount(不污染待结算虚账)
+        assertEquals(0, r.getSystemAmount().compareTo(new BigDecimal("2.0")),
+                "system_amount=正常5−退款3=2,兑换/测试不入待结算(P0-3)");
+        assertEquals(Settlement.ST_SETTLED, r.getStlStatus(), "两差全绿(账单2/手续费0.2/到账1.8)");
+        assertEquals(2, r.getBackfillCount().intValue(), "只回填正常+退款两笔");
+        assertEquals(billId, saleRecordMapper.selectById(normal.getId()).getSettlementId());
+        assertEquals(billId, saleRecordMapper.selectById(refund.getId()).getSettlementId());
+        assertNull(saleRecordMapper.selectById(exchange.getId()).getSettlementId(),
+                "兑换单永不被结算单回填(它的钱走厂家补贴对冲,不走平台)");
     }
 
     @Test
-    @Disabled("M3-pending:兑换成本由厂家补贴到账对冲(deduction 待抵扣→结算单抵扣)依赖钱账链,M3 实装;载体表已验")
+    @DisplayName("兑换成本对冲闭环(M3-3 转绿):兑换出货成本 → 抵扣确认单(待抵扣)→ 应付结算单抵扣 → ROI 查询毛利口径闭环")
     void exchangeCostOffsetBySubsidy() {
-        // M3 实装后:兑换确认单形成待抵扣 → 下张应付结算单抵扣 → 毛利口径闭环
+        Object[] ctx = setup();
+        Machine m = (Machine) ctx[0];
+        Product p = (Product) ctx[1];
+
+        // 基线快照(delta 口径,免受库内历史数据影响)
+        SettlementDtos.ExchangeRoiResp before = settlementService.exchangeRoi(null, null);
+
+        // 兑换出货 2 件,成本 4(移动加权快照;收入按 0)
+        SaleRecord exchange = sale(m.getId(), p.getId(), "2", "0", "兑换", DAY.atTime(11, 0));
+        exchange.setCostAmount(new BigDecimal("4.0"));
+        saleRecordMapper.updateById(exchange);
+
+        // 厂家兑换补贴形成待抵扣(抵扣确认单,supplier_id 必填防串户)
+        Supplier sup = new Supplier();
+        sup.setSupplierCode("RGS04" + SEQ.incrementAndGet());
+        sup.setSupplierName("兑换活动厂家");
+        sup.setSettleMethod("现结");
+        sup.setAccountDays(0);
+        sup.setOpeningPayable(BigDecimal.ZERO);
+        sup.setCoopStatus("合作中");
+        supplierMapper.insert(sup);
+        SettleDtos.DeductionCreateReq dedReq = new SettleDtos.DeductionCreateReq();
+        dedReq.setSupplierId(sup.getId());
+        dedReq.setDedSource("兑换");
+        dedReq.setAmount(new BigDecimal("4.0"));
+        dedReq.setPeriodDesc("6月兑换活动补贴,对冲出货成本");
+        Long dedId = deductionService.create(dedReq, OP, OPERATOR);
+
+        // 下张应付结算单带入抵扣(M3-2 链):采购 10×2=20 → 结算单 20−4=16
+        top.aole.vend.modules.doc.dto.DocCreateReq poReq = req(DocType.PURCHASE_IN, null,
+                DocService.SOURCE_MANUAL, DAY, new Object[]{p.getId(), "10", "2.0"});
+        poReq.setSupplierId(sup.getId());
+        Long docId = docService.createDoc(poReq, OP);
+        docService.submit(docId, OP);
+        docService.confirm(docId, OP, false, null);
+        SettleBill bill = settleBillMapper.selectOne(new LambdaQueryWrapper<SettleBill>()
+                .eq(SettleBill::getSourceDocId, docId).eq(SettleBill::getDirection, "正常"));
+        assertNotNull(bill, "采购确认自动生成应付结算单");
+        SettleBillService.ConfirmResult cr = settleBillService.confirm(
+                bill.getId(), Collections.singletonList(dedId), OP, OPERATOR, "老板");
+        assertEquals(0, cr.getAmountActual().compareTo(new BigDecimal("16.0")), "货款 20 − 兑换补贴 4 = 实结 16");
+        assertEquals("已抵扣", deductionMapper.selectById(dedId).getDedStatus());
+        assertEquals(bill.getId(), deductionMapper.selectById(dedId).getUsedSettleBillId());
+
+        // ROI 查询(delta 口径,免受库内历史数据影响):成本 4 全部被补贴 4 盖住 → 毛利口径闭环
+        SettlementDtos.ExchangeRoiResp after = settlementService.exchangeRoi(null, null);
+        assertEquals(0, after.getExchangeCost().subtract(before.getExchangeCost())
+                .compareTo(new BigDecimal("4.0")), "Σ兑换出货成本 +4");
+        assertEquals(0, after.getSubsidyUsed().subtract(before.getSubsidyUsed())
+                .compareTo(new BigDecimal("4.0")), "Σ厂家补贴已抵扣 +4(deduction 已确认并用于结算单)");
+        assertEquals(0, after.getSubsidyConfirmed().subtract(before.getSubsidyConfirmed())
+                .compareTo(new BigDecimal("4.0")));
+        assertEquals(0, after.getNet().subtract(before.getNet()).compareTo(BigDecimal.ZERO),
+                "净对冲增量=补贴4−成本4=0:兑换单成本由补贴到账完全对冲(§13.2-3 毛利口径闭环)");
     }
 }
