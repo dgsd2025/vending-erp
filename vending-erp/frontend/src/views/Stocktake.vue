@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import DocDetailDrawer from '@/components/doc/DocDetailDrawer.vue'
 import { pageMachines, pageProducts, type Machine } from '@/api/basedata'
@@ -26,6 +27,9 @@ import {
  */
 
 // ============================== 机器主数据 ==============================
+
+/** M2-10 P1-2:机器名下钻机器详情(七律#3) */
+const router = useRouter()
 
 const machines = ref<Machine[]>([])
 async function loadMachines() {
@@ -522,7 +526,12 @@ onUnmounted(() => {
     <div v-if="detail" class="ledger-card" data-block="worksheet">
       <h3>
         📱 {{ detail.stStatus === '进行中' ? '进行中' : detail.stStatus }}:{{ detail.scopeType }}盘点
-        <template v-if="detail.machineName">· {{ detail.machineName }}</template>
+        <!-- M2-10 P1-2:工作区头机器名下钻(七律#3) -->
+        <template v-if="detail.machineName">
+          ·
+          <a v-if="detail.machineId" class="name-link" @click="router.push(`/machines/${detail.machineId}`)">{{ detail.machineName }} ↗</a>
+          <template v-else>{{ detail.machineName }}</template>
+        </template>
         <span class="chip" :class="statusChip(detail.stStatus)">{{ detail.stStatus }}</span>
         <span class="hint">{{ detail.stNo }} · 快照 {{ detail.snapshotTime }} · {{ detail.sourceTask }}</span>
       </h3>
@@ -773,7 +782,15 @@ onUnmounted(() => {
             <template #default="{ row }"><span class="num name-link">{{ row.stNo }}</span></template>
           </el-table-column>
           <el-table-column label="范围" min-width="110">
-            <template #default="{ row }">{{ row.scopeType }}{{ row.machineName ? ' · ' + row.machineName : '' }}</template>
+            <!-- M2-10 P1-2:历史列表机器名下钻(七律#3;.stop 防触发整行打开明细) -->
+            <template #default="{ row }">
+              {{ row.scopeType }}
+              <template v-if="row.machineName">
+                ·
+                <a v-if="row.machineId" class="name-link" @click.stop="router.push(`/machines/${row.machineId}`)">{{ row.machineName }} ↗</a>
+                <template v-else>{{ row.machineName }}</template>
+              </template>
+            </template>
           </el-table-column>
           <el-table-column label="差异行" width="70" align="right">
             <template #default="{ row }"><span class="num">{{ row.diffCount }}</span></template>

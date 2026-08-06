@@ -3,8 +3,8 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
-  adoptPlan, ignorePlan, machineSuggestions, planDetail, purchaseSuggestions, recalc,
-  type PlanDetailResp, type PlanRow, type SuggestionsResp,
+  adoptPlan, clearanceAlerts, ignorePlan, machineSuggestions, planDetail, purchaseSuggestions, recalc,
+  type ClearanceAlertRow, type PlanDetailResp, type PlanRow, type SuggestionsResp,
 } from '@/api/replenish'
 import {
   getGlobalReplenishConfig, pageSuppliers, saveReplenishConfig,
@@ -29,17 +29,24 @@ const globalCfg = ref<ReplenishConfig | null>(null)
 async function load() {
   loading.value = true
   try {
-    const [m, p, cfg] = await Promise.all([
+    const [m, p, cfg, alerts] = await Promise.all([
       machineSuggestions(), purchaseSuggestions(), getGlobalReplenishConfig(),
+      // 清仓提醒挂了不拦补货主流程,退化为空列表(M2-10 P1-3)
+      clearanceAlerts().catch(() => [] as ClearanceAlertRow[]),
     ])
     machineData.value = m
     purchaseData.value = p
     globalCfg.value = cfg
+    clearAlerts.value = alerts
   } finally {
     loading.value = false
   }
 }
 onMounted(load)
+
+// ---------- 🏷 清仓残余三选一(M2-10 P1-3:P2-10 死锁解除三条腿的前端消费方) ----------
+const clearAlerts = ref<ClearanceAlertRow[]>([])
+const choiceChip: Record<string, string> = { 退供: 'info', 报损: 'danger', 换机促销: 'warning' }
 
 // ---------- 数据新鲜度(铁律#1:超 3 天建议变灰) ----------
 const staleDays = computed(() => machineData.value?.staleDays ?? purchaseData.value?.staleDays ?? null)
@@ -295,7 +302,9 @@ const trim = (v: number | string | null | undefined) =>
         />
         <el-card v-for="g in machineGroups" :key="g.machineId" shadow="never" class="mb-12px">
           <h3 style="font-family: var(--serif); margin: 0 0 10px">
-            📦 {{ g.machineName }}
+            <!-- M2-10 P1-2:机器名下钻机器详情(七律#3,同 Dashboard 机器卡一把尺) -->
+            <template v-if="g.machineId">📦 <a class="name-link" @click="router.push(`/machines/${g.machineId}`)">{{ g.machineName }} ↗</a></template>
+            <template v-else>📦 {{ g.machineName }}</template>
             <span class="hint">{{ g.rows.length }} 个 SKU 需补 · 机内库存 = 快照 + 业务时间增量推算</span>
           </h3>
           <el-table :data="g.rows" size="small">
@@ -377,6 +386,49 @@ const trim = (v: number | string | null | undefined) =>
 
       <!-- ============ 仓库侧 Tab ============ -->
       <el-tab-pane label="⛺ 仓库侧 · 采购建议" name="purchase">
+        <!-- 🏷 清仓提醒折叠条(M2-10 P1-3:清仓中商品滞留超 30 天仓库还压着货 → 三选一) -->
+        <el-collapse v-if="clearAlerts.length" class="mb-12px clearance-collapse">
+          <el-collapse-item name="clearance">
+            <template #title>
+              <span class="clearance-title">
+                🏷 <b>清仓提醒({{ clearAlerts.length }})</b>
+                —— 进入清仓超 30 天仓库还压着货,靠自然销售清不掉了,请三选一处理
+              </span>
+            </template>
+            <el-table :data="clearAlerts" size="small">
+              <el-table-column label="商品" min-width="170">
+                <template #default="{ row }">
+                  <b class="name-link" @click="router.push(`/products/${row.productId}`)">{{ row.productName }} ↗</b>
+                  <span class="mini ml-4px">{{ row.skuCode }}</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="仓库余量" align="right" width="100">
+                <template #default="{ row }"><b class="num">{{ trim(row.warehouseQty) }}</b></template>
+              </el-table-column>
+              <el-table-column label="滞留天数" align="right" width="130">
+                <template #default="{ row }">
+                  <b class="num" style="color: var(--amber)">{{ row.daysInClearance }} 天</b>
+                  <div class="mini">清仓自 {{ row.clearanceSince }}</div>
+                </template>
+              </el-table-column>
+              <el-table-column label="三选一建议" min-width="200">
+                <template #default="{ row }">
+                  <el-tag
+                    v-for="c in row.choices"
+                    :key="c"
+                    :type="(choiceChip[c] as any) ?? 'info'"
+                    size="small"
+                    effect="plain"
+                    class="mr-4px"
+                  >{{ c }}</el-tag>
+                </template>
+              </el-table-column>
+            </el-table>
+            <p class="mini mt-8px">
+              💡 退供 = 联系供应商退货(走采购退货);报损 = 认亏出库(走盘点报损);换机促销 = 挪到卖得动的机器降价清(走配货单)。清仓中商品不再产生采购建议,这里是它唯一的出路提醒。
+            </p>
+          </el-collapse-item>
+        </el-collapse>
         <el-empty v-if="purchaseRows.length === 0" description="暂无采购建议:仓库 + 机内 + 在途都够撑一个周期" />
         <el-card v-else shadow="never">
           <h3 style="font-family: var(--serif); margin: 0 0 10px">
@@ -554,6 +606,23 @@ const trim = (v: number | string | null | undefined) =>
   background: var(--green-soft);
   color: var(--green);
   font-weight: 700;
+}
+/* 🏷 清仓提醒折叠条(M2-10 P1-3):黄灯语气,展开是三选一表 */
+.clearance-collapse {
+  border: 1px solid #ecd8b8;
+  border-radius: 10px;
+  overflow: hidden;
+}
+.clearance-collapse :deep(.el-collapse-item__header) {
+  background: var(--amber-soft);
+  padding: 0 14px;
+  font-size: 13px;
+}
+.clearance-collapse :deep(.el-collapse-item__content) {
+  padding: 10px 14px 12px;
+}
+.clearance-title {
+  color: #8a5a1d;
 }
 /* AI 摘要灰位(mockup p2 a-blue 摘要条的占位形态,里程碑4 点亮) */
 .ai-summary-dim {

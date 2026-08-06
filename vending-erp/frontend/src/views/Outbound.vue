@@ -314,7 +314,10 @@ async function submitManual() {
           </template>
         </el-table-column>
         <el-table-column label="机器" min-width="120">
-          <template #default="{ row }">{{ row.machineName ?? '机器#' + row.machineId }}</template>
+          <!-- M2-10 P1-2:机器名下钻(七律#3) -->
+          <template #default="{ row }">
+            <a class="name-link" @click="$router.push(`/machines/${row.machineId}`)">{{ row.machineName ?? '机器#' + row.machineId }} ↗</a>
+          </template>
         </el-table-column>
         <el-table-column prop="planDate" label="配货日" width="100" />
         <el-table-column label="SKU 数 / 计划带出" align="right" width="130">
@@ -381,7 +384,13 @@ async function submitManual() {
         </el-table-column>
         <el-table-column prop="bizDate" label="业务日期" width="100" />
         <el-table-column label="机器" min-width="110">
-          <template #default="{ row }">{{ row.machineName ?? (row.machineId ? '机器#' + row.machineId : '—') }}</template>
+          <!-- M2-10 P1-2:机器名下钻(七律#3;无 machineId 的行保持纯文本) -->
+          <template #default="{ row }">
+            <a v-if="row.machineId" class="name-link" @click="$router.push(`/machines/${row.machineId}`)">
+              {{ row.machineName ?? '机器#' + row.machineId }} ↗
+            </a>
+            <template v-else>—</template>
+          </template>
         </el-table-column>
         <el-table-column label="类型" width="90">
           <template #default="{ row }">
@@ -434,7 +443,13 @@ async function submitManual() {
           <div class="ticket-head">
             <div>
               <div class="mini">目标机器(一机一箱)</div>
-              <b style="font-size: 16px">📦 {{ detailHead?.machineName ?? '机器#' + detail.ticket.machineId }}</b>
+              <!-- M2-10 P1-2:详情头机器名下钻(七律#3) -->
+              <b style="font-size: 16px">
+                📦
+                <a class="name-link" @click="$router.push(`/machines/${detail.ticket.machineId}`)">
+                  {{ detailHead?.machineName ?? '机器#' + detail.ticket.machineId }} ↗
+                </a>
+              </b>
             </div>
             <div>
               <div class="mini">配货日期</div>

@@ -5,6 +5,8 @@ import { reportApi, type GrossMarginResp, type StockResp } from '@/api/report'
 import { importsApi, type ImportBatch } from '@/api/imports'
 import { pageAliasPending } from '@/api/basedata'
 import { taskApi, type TodayViewResp } from '@/api/task'
+import { clearanceAlerts, machineSuggestions, purchaseSuggestions } from '@/api/replenish'
+import { listTickets } from '@/api/prekit'
 import { useAppStore } from '@/stores/app'
 
 /**
@@ -69,8 +71,40 @@ onMounted(load)
 const money = (v: number | string | null | undefined) =>
   v == null ? '—' : `¥${Number(v).toLocaleString(undefined, { maximumFractionDigits: 0 })}`
 
+// M2 灯与 AI 补货真数(M2-10 P1-1:里程碑 2 已交付,卡点亮 + 新灯并入红灯区;失败不拖累主加载)
+const replenishPending = ref<number | null>(null)
+const replenishUrgent = ref(0)
+const prekitOverdue = ref(0)
+const clearanceCount = ref(0)
+onMounted(async () => {
+  try {
+    const [m, p, tickets, alerts] = await Promise.all([
+      machineSuggestions(), purchaseSuggestions(), listTickets(), clearanceAlerts(),
+    ])
+    const rows = [...m.rows, ...p.rows].filter((r) => r.planStatus === '建议')
+    replenishPending.value = rows.length
+    replenishUrgent.value = rows.filter((r) => {
+      try {
+        const u = String(JSON.parse(r.formulaJson ?? '{}')['紧急度'] ?? '')
+        return u === '缺货' || u === '急'
+      } catch {
+        return false
+      }
+    }).length
+    prekitOverdue.value = tickets.filter((t) => t.overdue).length
+    clearanceCount.value = alerts.length
+  } catch {
+    replenishPending.value = null // 接口不可用 → 卡退化显示「—」,红灯不误报
+  }
+})
+
 const redCount = computed(
-  () => (stock.value?.negativeCount ?? 0) + pendingAlias.value + priceChangeCount.value,
+  () =>
+    (stock.value?.negativeCount ?? 0) +
+    pendingAlias.value +
+    priceChangeCount.value +
+    prekitOverdue.value +
+    clearanceCount.value,
 )
 
 /** 机器卡:当月机器维毛利行(key=machineId) */
@@ -156,8 +190,16 @@ const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart
         💲 <b>最近批次 {{ priceChangeCount }} 条改价待确认</b>(成交价 ≠ 档案参考价)
         <span class="go">去确认 →</span>
       </div>
+      <div v-if="prekitOverdue" class="alert a-amber" @click="router.push('/outbound')">
+        🧺 <b>{{ prekitOverdue }} 张配货单超窗未核销</b> —— 过了 ±48h 窗口还没等到后台补货记录,带回率算不出
+        <span class="go">去核销 →</span>
+      </div>
+      <div v-if="clearanceCount" class="alert a-amber" @click="router.push('/replenish')">
+        🏷 <b>{{ clearanceCount }} 个清仓商品滞留超 30 天</b> —— 仓库还压着货,请三选一:退供 / 报损 / 换机促销
+        <span class="go">去处理 →</span>
+      </div>
       <div v-if="!redCount" class="alert a-blue">
-        ✅ 库存红灯清零:无负库存 · 无待绑别名 · 无改价待确认 —— 台账健康
+        ✅ 红灯清零:无负库存 · 无待绑别名 · 无改价待确认 · 无超窗配货单 · 无清仓残余 —— 台账健康
       </div>
     </div>
 
@@ -179,10 +221,16 @@ const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart
         <span class="mini">仓库 {{ money(stock?.warehouseAmount) }} + 机器里 {{ money(stock?.machineAmount) }}</span>
         <div class="human">人话:这是家底,与库存页/资产家底同一个数(单一真相源)。</div>
       </div>
-      <div class="ledger-card stat milestone" @click="router.push('/reports')">
-        <div class="lb">🤖 AI 补货建议</div>
-        <div class="vv num" style="color: #b9b2a0">里程碑 2</div>
+      <!-- M2-10 P1-1 点亮:里程碑 2 已交付,真数 + 跳补货页(不再灰位、不再错跳 /reports) -->
+      <div class="ledger-card stat" style="cursor: pointer" @click="router.push('/replenish')">
+        <div class="lb">🤖 AI 补货建议 <span class="chip c-gray">今日待处理</span></div>
+        <div class="vv num">
+          {{ replenishPending == null ? '—' : replenishPending }}
+          <span style="font-size: 14px; color: var(--ink2)">条</span>
+          <span v-if="replenishUrgent" style="font-size: 15px; color: var(--red)">· 急/缺货 {{ replenishUrgent }}</span>
+        </div>
         <span class="mini">(R,S) 公式算数字 · AI 讲人话 · 配货单 pre-kit</span>
+        <div class="human">人话:{{ replenishPending == null ? '建议数暂取不到,去补货页看' : replenishPending === 0 ? '货道和仓库都够撑,今天不用补' : `有 ${replenishPending} 条建议等你勾选,点卡去补货页处理` }}。</div>
       </div>
       <div class="ledger-card stat milestone">
         <div class="lb">💰 钱账 · 待办</div>

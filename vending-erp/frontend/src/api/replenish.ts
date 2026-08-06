@@ -54,6 +54,18 @@ export interface RecalcResp {
   purchaseRows: number
 }
 
+/** 清仓残余提醒行(P2-10 三条腿:进入清仓超 30 天仓库还压着货 → 三选一) */
+export interface ClearanceAlertRow {
+  productId: number
+  skuCode: string
+  productName: string
+  warehouseQty: number | string
+  clearanceSince: string
+  daysInClearance: number
+  choices: string[]
+  message: string
+}
+
 /** 🔬 过程详情:plan 全量 + llm 透明四件套 */
 export interface PlanDetailResp {
   plan: PlanRow & { formulaJson: string }
@@ -96,4 +108,9 @@ export function adoptPlan(id: number): Promise<void> {
 
 export function planDetail(id: number): Promise<PlanDetailResp> {
   return request.get(`/v1/replenish/plans/${id}`)
+}
+
+/** 清仓残余三选一提醒(M2-10 P1-3:灯造好了要有人看——Replenish 仓库侧 + 驾驶舱红灯区消费) */
+export function clearanceAlerts(): Promise<ClearanceAlertRow[]> {
+  return request.get('/v1/replenish/clearance-alerts')
 }
