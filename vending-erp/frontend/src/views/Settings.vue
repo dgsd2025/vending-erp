@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { ref } from 'vue'
+import { useRoute } from 'vue-router'
 import MachineSlotTab from '@/components/basedata/MachineSlotTab.vue'
 import ProductPanel from '@/components/basedata/ProductPanel.vue'
 import SupplierTab from '@/components/basedata/SupplierTab.vue'
@@ -12,7 +13,11 @@ import { currentUserName } from '@/api/basedata'
  * 设置中心(对照 mockup p12):机器与货道 / 商品 / 供应商 / 资金账户(M3-1 点亮)/ 参数与阈值。
  * 每一次改动都记 op_log:谁改的、改了什么,永远可查。
  */
-const activeTab = ref('machine')
+// 支持 /settings?tab=account 直达(M3-3 结算面板「去定型结算模式」入口)
+const route = useRoute()
+const validTabs = ['machine', 'product', 'supplier', 'account', 'params']
+const initTab = typeof route.query.tab === 'string' && validTabs.includes(route.query.tab) ? route.query.tab : 'machine'
+const activeTab = ref(initTab)
 </script>
 
 <template>
