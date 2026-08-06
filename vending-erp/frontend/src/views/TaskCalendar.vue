@@ -383,7 +383,8 @@ const checkLabel = (t?: string | null) => (t ? (CHECK_LABELS[t] ?? t) : '纯手�
 }
 .week-grid {
   display: grid;
-  grid-template-columns: repeat(7, 1fr);
+  /* minmax(0,1fr):任务名 nowrap 会把列撑破容器(1280 下整页横向溢出),压回等分让文本省略 */
+  grid-template-columns: repeat(7, minmax(0, 1fr));
   gap: 8px;
   margin-top: 10px;
 }
@@ -465,5 +466,22 @@ const checkLabel = (t?: string | null) => (t ? (CHECK_LABELS[t] ?? t) : '纯手�
   color: var(--green);
   cursor: pointer;
   font-weight: 600;
+}
+
+/* 手机版(≤768px):周视图 2 列、双栏竖排、任务列竖排(M2-5 铁律10) */
+@media (max-width: 768px) {
+  .week-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .two-col {
+    grid-template-columns: 1fr;
+  }
+  .two-col > *,
+  .col-grid > * {
+    min-width: 0;
+  }
+  .col-grid {
+    grid-template-columns: 1fr !important; /* 覆盖行内 repeat(n,1fr),角色列竖排 */
+  }
 }
 </style>

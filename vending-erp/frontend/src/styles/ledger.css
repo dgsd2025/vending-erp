@@ -20,6 +20,15 @@
   --line2: #d5cdbc;
   --num: 'Barlow Semi Condensed', 'PingFang SC', sans-serif;
   --serif: 'Noto Serif SC', 'Songti SC', serif;
+
+  /* Element Plus 主色统一到账本绿(M2-9:mockup b-pri = --green,不用默认蓝) */
+  --el-color-primary: #2f6e52;
+  --el-color-primary-light-3: #6d9986;
+  --el-color-primary-light-5: #97b6a8;
+  --el-color-primary-light-7: #c1d3cb;
+  --el-color-primary-light-8: #d5e2dc;
+  --el-color-primary-light-9: #eaf0ee;
+  --el-color-primary-dark-2: #265842;
 }
 
 .ledger-page {

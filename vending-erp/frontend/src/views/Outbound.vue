@@ -232,6 +232,26 @@ async function submitManual() {
       两段的交接点 = <b>出库上架转移单</b>(唯一生产者 = 后台补货记录导入);配货单(pre-kit)= 补货员照单从仓库装箱,到机器直接开箱补,不现场数货。
     </p>
 
+    <!-- 🗺 货流全景(mockup p5:两个账本,两次转运的心智图) -->
+    <el-card shadow="never" class="mb-12px flow-map-card print-hide">
+      <h3 style="font-family: var(--serif); margin: 0 0 4px">
+        🗺 货流全景 · 两个账本,两次转运
+        <span class="hint">仓库账自己记(账本①),机内账以厂家后台为权威(账本②)</span>
+      </h3>
+      <div class="flow-map">
+        <div class="fm-node soft-blue"><b>🚛 批量进货</b><div class="mini">按采购周期<br />(R,S) 公式算量</div></div>
+        <b class="fm-arrow">─收货点数─►</b>
+        <div class="fm-node deep"><b>🏬 大仓库(蓄水池)</b><div class="fm-sub">账本①自己记:入库+ 上架− 盘点修正<br />现存量见「库存管理」</div></div>
+        <b class="fm-arrow">─每天 pre-kit 上架─►</b>
+        <div class="fm-node green"><b>🥤 机器(水杯 · 每天倒满)</b><div class="fm-sub">账本②厂家后台权威:补货+ 出货−<br />系统只做核对与告警</div></div>
+        <b class="fm-arrow">─消费者─►</b>
+        <div class="fm-node soft-amber"><b>💰 销售</b><div class="mini">出货明细<br />每日导入回流</div></div>
+      </div>
+      <p class="mini" style="margin: 10px 0 0">
+        两段的交接点 = <b>出库上架单</b>(从后台补货记录自动生成,仓库账自动扣);两个账本每天导入时自动互相核对,对不上亮灯。
+      </p>
+    </el-card>
+
     <!-- ⚡任务来源 + 编号流程条(七律#2:领着人干活) -->
     <el-alert type="info" :closable="false" class="mb-12px">
       <template #title>
@@ -323,7 +343,8 @@ async function submitManual() {
             <div class="mini">核 {{ dt(row.verifyAt) }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200">
+        <!-- 操作列 fixed=right:窄视口不再被水平裁切(M2-3 坑7) -->
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" size="small" @click="openDetail(row)">详情/打印</el-button>
             <el-button v-if="row.ticketStatus === '已生成'" link type="warning" size="small" @click="doExecute(row.id, row.ticketNo)">
@@ -347,7 +368,10 @@ async function submitManual() {
       <div class="flex items-center gap-12px mb-8px">
         <b>📄 转移单(仓库 → 机器)</b>
         <span class="mini">唯一生产者 = 导入中心通道②《系统补货记录》;负数补货 = 退库取回</span>
-        <el-button size="small" style="margin-left: auto" @click="openManual">✍️ 手工录入(兜底)</el-button>
+        <span style="margin-left: auto; display: flex; gap: 8px">
+          <el-button size="small" type="primary" plain @click="$router.push('/import')">📂 去导入中心导《系统补货记录》</el-button>
+          <el-button size="small" @click="openManual">✍️ 手工录入(兜底)</el-button>
+        </span>
       </div>
       <el-table :data="transfers" size="small" max-height="420">
         <el-table-column label="单号" width="160">
@@ -602,6 +626,30 @@ async function submitManual() {
   background: #eee9dd;
   color: #7c745f;
 }
+/* 🗺 货流全景(mockup p5) */
+.flow-map-card {
+  background: linear-gradient(135deg, #fffdf8, #f2efe4);
+}
+.flow-map {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+}
+.fm-node {
+  padding: 10px 14px;
+  border-radius: 9px;
+  text-align: center;
+}
+.fm-node.soft-blue { background: var(--blue-soft); }
+.fm-node.soft-amber { background: var(--amber-soft); }
+.fm-node.deep { background: var(--green-deep); color: #fff; }
+.fm-node.deep .fm-sub { font-size: 11px; color: #9db8a8; }
+.fm-node.green { background: var(--green); color: #fff; }
+.fm-node.green .fm-sub { font-size: 11px; color: #d5e6db; }
+.fm-arrow { color: var(--ink2); font-size: 12px; }
 .ticket-head {
   display: flex;
   gap: 28px;
@@ -629,6 +677,7 @@ async function submitManual() {
   .m-only { display: block; }
   .pk-desktop { display: none !important; } /* 桌面表格换卡片,不退化桌面布局 */
   .ledger-title .sub { display: none; }
+  .flow-map-card { display: none; } /* 心智图是桌面讲解内容,手机版聚焦干活 */
 
   /* 配货单列表大卡 */
   .pk-card {

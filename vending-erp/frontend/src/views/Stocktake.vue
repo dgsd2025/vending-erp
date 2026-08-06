@@ -417,6 +417,16 @@ function openDoc(docId?: number | null) {
   docDrawerVisible.value = true
 }
 
+// ============================== 月度财务盘点 SOP(mockup p9,静态 SOP 说明;M3/M4 环节灰位) ==============================
+
+const sopRows = [
+  { step: 'P 准备', when: '前一天', who: '系统', what: '自动生成任务包:仓库盘点 ×1 + 资金核对 + 应付核对', support: '账面数自动快照(任务日历派单)', milestone: '' },
+  { step: 'D1 货盘', when: '上午', who: '补货员', what: '仓库大盘(机器不重复盘——已由每周轮盘覆盖,只汇总本月轮盘结果)', support: '手机录入,只填差异行', milestone: '' },
+  { step: 'D2 钱盘', when: '上午', who: '老板', what: '核微信/现金实际余额 · 核平台上月到账 · 发对账单给供应商确认', support: '三个核对页,填实际数', milestone: '里程碑 3' },
+  { step: 'C 检查', when: '下午', who: '系统+老板', what: '自动出《月度盘点报告》:货差/钱差/资产快照/环比', support: '差异超阈值红灯 · 报告归档', milestone: '里程碑 3' },
+  { step: 'A 改进', when: '下午', who: '老板', what: '对着报告定改进任务(淘汰/调参/索赔),AI 起草建议', support: '任务带验证指标,下月自动回查', milestone: '里程碑 4' },
+]
+
 // ============================== 损耗小结 ==============================
 
 const lossStats = ref<LossStatRow[]>([])
@@ -775,7 +785,8 @@ onUnmounted(() => {
               </span>
             </template>
           </el-table-column>
-          <el-table-column label="状态" width="90">
+          <!-- fixed=right:半宽卡里窄视口不裁切状态 chip(M2-3 坑7 同尺) -->
+          <el-table-column label="状态" width="120" fixed="right">
             <template #default="{ row }">
               <span class="chip" :class="statusChip(row.stStatus)">{{ row.stStatus }}{{ row.stStatus === '已完成' && !row.diffCount ? ' ✓ 账实全符' : '' }}</span>
             </template>
@@ -817,6 +828,33 @@ onUnmounted(() => {
           🤖 损耗按原因反哺补货参数(过期多→降机内上限)· AI 起草改进建议:里程碑 4 开放
         </p>
       </div>
+    </div>
+
+    <!-- 📅 月度财务盘点 SOP(mockup p9:货和钱一起盘;钱盘/报告/改进属里程碑3/4,画灰位) -->
+    <div class="ledger-card" data-block="monthly-sop">
+      <h3>📅 月度财务盘点 SOP <span class="hint">每月 1 日 · 半天 · 货和钱一起盘(任务包由任务日历自动生成)</span></h3>
+      <el-table :data="sopRows" size="small">
+        <el-table-column label="环节" width="110">
+          <template #default="{ row }">
+            <b>{{ row.step }}</b><div class="mini">{{ row.when }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column prop="who" label="谁" width="90" />
+        <el-table-column prop="what" label="干什么" min-width="230" />
+        <el-table-column label="系统支持" min-width="150">
+          <template #default="{ row }"><span class="mini">{{ row.support }}</span></template>
+        </el-table-column>
+        <el-table-column label="状态" width="130" fixed="right">
+          <template #default="{ row }">
+            <span class="chip" :class="row.milestone ? 'c-gray' : 'c-green'">
+              {{ row.milestone ? row.milestone + ' 开放' : '本期已可用' }}
+            </span>
+          </template>
+        </el-table-column>
+      </el-table>
+      <p class="mini" style="margin-top: 8px">
+        💡 机器不重复盘——已由每周轮盘覆盖,月盘只做<b>仓库大盘</b> + 汇总本月轮盘结果;钱盘(资金/应付核对)与《月度盘点报告》随钱账、PDCA 里程碑逐月点亮。
+      </p>
     </div>
 
     <p class="ledger-foot-note">— 老台账的《月末盘点表》从"建好了没填过"变成固定节奏:补货顺手盘 + 每月 1 日半天大盘 —</p>
@@ -894,6 +932,8 @@ onUnmounted(() => {
   .flow-bar { flex-wrap: wrap; }
   .flow-step { flex: 1 1 33%; border-radius: 0 !important; }
   .grid-cols-2 { grid-template-columns: 1fr !important; } /* 历史+损耗竖排 */
+  /* grid 子项 min-width 默认 auto:内嵌 el-table 会把整页撑出横向滚动,压回去让表格自己滚 */
+  .grid-cols-2 > * { min-width: 0; }
   .wizard-bar { flex-direction: column; }
   .wz-step { border-radius: 0 !important; }
   .wz-step + .wz-step { border-left: none; border-top: 2px dashed rgba(255, 255, 255, 0.5); }

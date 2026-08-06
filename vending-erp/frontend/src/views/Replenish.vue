@@ -279,6 +279,13 @@ const trim = (v: number | string | null | undefined) =>
       💡 两件事别混:<b>机器侧</b>去了就补满(跑一趟的人力比压几瓶货贵);<b>仓库侧</b>才用公式算"该向供应商订多少"。慢销品不套公式,直接 min/max 补满。
     </p>
 
+    <!-- 🤖 AI 摘要(mockup p2 有,页级 LLM 汇总属 AI 全家桶 → 灰位占位) -->
+    <div class="ai-summary-dim mb-12px">
+      🤖 <b>AI 摘要</b>:把整页建议汇成三句人话(共需补多少件 · 缺口要不要先采购 · 先补哪台机)
+      <span class="chip c-gray">里程碑 4 开放(AI 全家桶)</span>
+      <span class="mini">现在每行的 🔬 已能看单条建议的算法与 AI 解释</span>
+    </div>
+
     <el-tabs v-model="activeTab" :class="{ 'stale-dim': isStale }">
       <!-- ============ 机器侧 Tab ============ -->
       <el-tab-pane label="🚚 机器侧 · 补满货道" name="machine">
@@ -343,7 +350,7 @@ const trim = (v: number | string | null | undefined) =>
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="" width="120">
+            <el-table-column label="" width="120" fixed="right">
               <template #default="{ row }">
                 <span class="ai-badge" @click="openProcess(row)">🔬</span>
                 <el-button link size="small" @click="doIgnore(row)">忽略</el-button>
@@ -389,13 +396,13 @@ const trim = (v: number | string | null | undefined) =>
             <el-table-column label="日均卖" align="right" width="80">
               <template #default="{ row }"><span class="num">{{ trim(row.avgDaily) }}</span></template>
             </el-table-column>
-            <el-table-column label="现有(仓+机+在途)" align="right" width="130">
+            <el-table-column label="现有(仓+机+在途)" align="right" width="115">
               <template #default="{ row }"><span class="num">{{ trim(row.currentQty) }}</span></template>
             </el-table-column>
-            <el-table-column label="补到水位 S" align="right" width="100">
+            <el-table-column label="补到水位 S" align="right" width="90">
               <template #default="{ row }"><span class="num">{{ trim(row.targetLevelS) }}</span></template>
             </el-table-column>
-            <el-table-column label="安全库存" align="right" width="90">
+            <el-table-column label="安全库存" align="right" width="80">
               <template #default="{ row }">
                 <span class="num">{{ row.safetyStock == null ? '—' : trim(row.safetyStock) }}</span>
               </template>
@@ -410,7 +417,7 @@ const trim = (v: number | string | null | undefined) =>
                 </b>
               </template>
             </el-table-column>
-            <el-table-column label="" width="120">
+            <el-table-column label="" width="120" fixed="right">
               <template #default="{ row }">
                 <span class="ai-badge" @click="openProcess(row)">🔬</span>
                 <el-button link size="small" @click="doIgnore(row)">忽略</el-button>
@@ -423,6 +430,9 @@ const trim = (v: number | string | null | undefined) =>
             </el-button>
             <span class="mini">合计约 {{ purchaseTotalBoxes }} 箱 · 转单后建议行标「已采纳」,收货入库走采购页</span>
           </div>
+          <p class="mini mt-8px">
+            💰 预计花费 · 参考供应商(按最近一次进价估算 + 上次从谁家拿的):<span class="chip c-gray">里程碑 3 开放</span>(钱账/供应商往来上线后每行点亮)
+          </p>
         </el-card>
       </el-tab-pane>
     </el-tabs>
@@ -544,6 +554,19 @@ const trim = (v: number | string | null | undefined) =>
   background: var(--green-soft);
   color: var(--green);
   font-weight: 700;
+}
+/* AI 摘要灰位(mockup p2 a-blue 摘要条的占位形态,里程碑4 点亮) */
+.ai-summary-dim {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12.5px;
+  color: var(--ink2);
+  background: #f1ede2;
+  border: 1px dashed var(--line2);
+  border-radius: 10px;
+  padding: 9px 14px;
 }
 .ai-badge {
   cursor: pointer;

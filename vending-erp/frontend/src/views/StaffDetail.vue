@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   taskApi,
   ROLE_LABELS,
@@ -15,6 +15,7 @@ import {
  * 定位是工作画像+交接备忘,数据全部来自任务实例与 op_log 留痕,不需要额外填报。
  */
 const route = useRoute()
+const router = useRouter()
 const name = computed(() => String(route.params.name ?? ''))
 
 const loading = ref(false)
@@ -70,6 +71,20 @@ const fmtTime = (t?: string | null) => (t ? t.replace('T', ' ').slice(5, 16) : '
 function logLine(l: OpLog) {
   return `${l.action} · ${targetLabel(l.targetType)}${l.targetId ? ' #' + l.targetId : ''}`
 }
+
+/** 任务与质量横条(mockup p16 hbar;全部由 overview 真数据推得,没数据显"—") */
+const pct = (num: number, den: number) => (den > 0 ? Math.round((num / den) * 100) : null)
+const qualityBars = computed(() => {
+  const o = overview.value
+  const total = o?.taskTotal30d ?? 0
+  const auto = o?.taskAutoDone30d ?? 0
+  const manual = o?.taskManualDone30d ?? 0
+  return [
+    { label: '任务完成率', value: o?.completionRate ?? pct(o?.taskDone30d ?? 0, total) },
+    { label: '按时率(1−逾期)', value: total > 0 ? 100 - (pct(o?.taskOverdue30d ?? 0, total) ?? 0) : null },
+    { label: '系统校验通过占比', value: pct(auto, auto + manual) },
+  ]
+})
 </script>
 
 <template>
@@ -81,6 +96,14 @@ function logLine(l: OpLog) {
       <span class="chip c-gray">SSO:园区主系统(接入前占位)</span>
       <span class="chip" :class="overview?.active ? 'c-green' : 'c-gray'">
         {{ overview?.active ? '在岗' : '未配角色/停用' }}
+      </span>
+      <!-- mockup p16 头部三动作:角色/转派在任务日历完成;离职交接打包属里程碑4 -->
+      <span class="head-actions">
+        <el-button size="small" @click="router.push('/tasks')">调整角色</el-button>
+        <el-button size="small" @click="router.push('/tasks')">转派其任务</el-button>
+        <el-tooltip content="名下任务已可在任务日历逐个转派;一键打包交接(任务+单据+职责清单):里程碑 4 开放" placement="bottom">
+          <el-button size="small" disabled style="color: var(--red)">离职交接</el-button>
+        </el-tooltip>
       </span>
     </div>
     <p class="ledger-note">
@@ -125,6 +148,30 @@ function logLine(l: OpLog) {
           {{ (overview?.opLogStats ?? []).slice(0, 3).map((s) => `${targetLabel(s.targetType)} ${s.cnt}`).join(' · ') || '暂无操作' }}
         </span>
       </div>
+      <!-- mockup p16 另两卡:红冲差错率/经手金额靠钱账单据链,里程碑3 点亮 -->
+      <div class="ledger-card stat dim">
+        <div class="lb">录单差错率</div>
+        <div class="vv num">—</div>
+        <span class="chip c-gray">里程碑 3 开放</span>
+      </div>
+      <div class="ledger-card stat dim">
+        <div class="lb">经手金额</div>
+        <div class="vv num">—</div>
+        <span class="chip c-gray">里程碑 3 开放</span>
+      </div>
+    </div>
+
+    <!-- 📋 任务与质量横条(mockup p16 hbar;真数据推得) -->
+    <div class="ledger-card">
+      <h3>📋 任务与质量(近 30 天) <span class="hint">全部由任务实例真数据推得;没派过任务显"—"</span></h3>
+      <div v-for="b in qualityBars" :key="b.label" class="hbar">
+        <span class="nm">{{ b.label }}</span>
+        <div class="tk"><i :style="{ width: (b.value ?? 0) + '%' }" :class="{ warn: b.value != null && b.value < 90 }"></i></div>
+        <span class="vl num">{{ b.value == null ? '—' : b.value + '%' }}</span>
+      </div>
+      <p class="mini" style="margin: 8px 0 0">
+        🤖 <b>AI 工作画像</b>(把上面的数说成一段人话+改进建议):<span class="chip c-gray">里程碑 4 开放(AI 全家桶)</span>
+      </p>
     </div>
 
     <div class="two-col">
@@ -175,7 +222,7 @@ function logLine(l: OpLog) {
 <style scoped>
 .stat-grid {
   display: grid;
-  grid-template-columns: repeat(5, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(128px, 1fr));
   gap: 12px;
   margin-bottom: 16px;
 }
@@ -192,10 +239,78 @@ function logLine(l: OpLog) {
   font-weight: 700;
   margin: 5px 0 2px;
 }
+/* 灰位卡:里程碑未到,画出来防"做没做"分不清 */
+.stat.dim {
+  opacity: 0.75;
+  border-style: dashed;
+}
+/* 头部动作按钮组(mockup p16) */
+.head-actions {
+  margin-left: auto;
+  display: flex;
+  gap: 8px;
+}
+/* 质量横条(mockup .hbar) */
+.hbar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-top: 8px;
+  font-size: 12.5px;
+}
+.hbar .nm {
+  width: 150px;
+  color: var(--ink2);
+  flex-shrink: 0;
+}
+.hbar .tk {
+  flex: 1;
+  height: 14px;
+  background: #eee9dd;
+  border-radius: 7px;
+  overflow: hidden;
+}
+.hbar .tk i {
+  display: block;
+  height: 100%;
+  border-radius: 7px;
+  background: linear-gradient(90deg, var(--green), #3f8465);
+  transition: width 0.3s;
+}
+.hbar .tk i.warn {
+  background: linear-gradient(90deg, #c9a13c, #b58a2a);
+}
+.hbar .vl {
+  width: 48px;
+  text-align: right;
+  font-weight: 700;
+}
 .two-col {
   display: grid;
   grid-template-columns: 1fr 1fr;
   gap: 16px;
+}
+/* 手机版(≤768px):数字卡两列、双栏竖排(M2-5 铁律10) */
+@media (max-width: 768px) {
+  .stat-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .two-col {
+    grid-template-columns: 1fr;
+  }
+  .two-col > * {
+    min-width: 0;
+  }
+  .ledger-title {
+    flex-wrap: wrap;
+  }
+  .head-actions {
+    margin-left: 0;
+    width: 100%;
+  }
+  .hbar .nm {
+    width: 120px;
+  }
 }
 .ttab {
   width: 100%;
