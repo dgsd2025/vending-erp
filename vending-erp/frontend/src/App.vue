@@ -1,13 +1,20 @@
 <script setup lang="ts">
+import { ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import DataFreshnessBar from '@/components/DataFreshnessBar.vue'
+import { isOffline, pendingTasks, replayQueue, replaying } from '@/utils/offline-queue'
 
 /**
  * 应用骨架(对照 mockup V15 sidebar):深绿账房侧栏 + 米纸色主区。
  * 菜单分组与 mockup 对齐;未到里程碑的入口画出来标灰(卡位不可点),防"做没做"分不清。
+ * M2-5:≤768px 视口自动进手机模式——侧栏收成汉堡抽屉,顶部常驻离线黄条(有暂存才出现)。
  */
 const route = useRoute()
 const router = useRouter()
+
+/** 手机模式:汉堡抽屉开合;切路由自动收起 */
+const menuOpen = ref(false)
+watch(() => route.path, () => { menuOpen.value = false })
 
 const groups: { label?: string; items: { path?: string; ico: string; title: string; milestone?: string }[] }[] = [
   {
@@ -57,7 +64,13 @@ const isActive = (path?: string) =>
 
 <template>
   <div class="app-shell">
-    <aside class="sidebar">
+    <!-- 手机顶栏(≤768px 才显示):汉堡 + 标题 -->
+    <header class="m-topbar">
+      <button class="burger" aria-label="菜单" @click="menuOpen = !menuOpen">☰</button>
+      <span class="m-title">园区小卖 · 账房</span>
+    </header>
+    <div v-if="menuOpen" class="side-mask" @click="menuOpen = false"></div>
+    <aside class="sidebar" :class="{ open: menuOpen }">
       <div class="logo">
         <h1>园区小卖 · 账房</h1>
         <p>VENDING ERP · M1</p>
@@ -82,6 +95,17 @@ const isActive = (path?: string) =>
       </div>
     </aside>
     <main class="main">
+      <!-- 离线回传黄条(M2-5):断网或有暂存任务时常显,恢复自动重传 -->
+      <div v-if="isOffline || pendingTasks.length" class="offline-bar" data-block="offline-bar">
+        <template v-if="isOffline">📴 当前离线:录入存本机不丢,提交会离线暂存</template>
+        <template v-else>🟡 网络已恢复</template>
+        <template v-if="pendingTasks.length">
+          · 暂存 <b>{{ pendingTasks.length }}</b> 条待回传,恢复后自动重传
+          <button v-if="!isOffline" class="retry-btn" :disabled="replaying" @click="replayQueue()">
+            {{ replaying ? '重传中…' : '立即重传' }}
+          </button>
+        </template>
+      </div>
       <router-view />
     </main>
   </div>
@@ -208,5 +232,97 @@ body {
   padding: 26px 34px 60px;
   max-width: 1220px;
   min-width: 0;
+}
+
+/* 离线回传黄条(M2-5,全局:盘点/配货单共用) */
+.offline-bar {
+  position: sticky;
+  top: 0;
+  z-index: 30;
+  background: var(--amber-soft);
+  color: var(--amber);
+  border: 1px solid var(--amber);
+  border-radius: 10px;
+  padding: 9px 14px;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 12px;
+}
+.offline-bar .retry-btn {
+  margin-left: 8px;
+  border: none;
+  border-radius: 8px;
+  background: var(--amber);
+  color: #fff;
+  font-weight: 700;
+  padding: 4px 12px;
+  cursor: pointer;
+}
+
+/* ============ M2-5 手机模式(≤768px):汉堡抽屉侧栏 ============ */
+.m-topbar {
+  display: none;
+}
+@media (max-width: 768px) {
+  .m-topbar {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 52px;
+    z-index: 40;
+    background: var(--green-deep);
+    color: #fff;
+    padding: 0 12px;
+  }
+  .m-topbar .burger {
+    font-size: 22px;
+    background: none;
+    border: none;
+    color: #fff;
+    padding: 6px 10px;
+  }
+  .m-topbar .m-title {
+    font-family: var(--serif);
+    font-size: 16px;
+    font-weight: 700;
+    letter-spacing: 1px;
+  }
+  .app-shell {
+    padding-top: 52px;
+  }
+  .sidebar {
+    position: fixed;
+    top: 52px;
+    left: 0;
+    bottom: 0;
+    height: auto;
+    z-index: 40;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    box-shadow: 4px 0 18px rgba(0, 0, 0, 0.25);
+  }
+  .sidebar.open {
+    transform: translateX(0);
+  }
+  .sidebar .logo {
+    display: none; /* 顶栏已有标题,抽屉省一截高度 */
+  }
+  .side-mask {
+    position: fixed;
+    inset: 52px 0 0 0;
+    z-index: 35;
+    background: rgba(0, 0, 0, 0.4);
+  }
+  .main {
+    padding: 14px 12px 40px;
+  }
+  .offline-bar {
+    top: 56px; /* 贴在 52px 固定顶栏下面,不被盖住 */
+    border-radius: 8px;
+  }
 }
 </style>

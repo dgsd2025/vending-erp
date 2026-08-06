@@ -1,21 +1,28 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import DocDetailDrawer from '@/components/doc/DocDetailDrawer.vue'
-import { pageMachines, type Machine } from '@/api/basedata'
+import { pageMachines, pageProducts, type Machine } from '@/api/basedata'
 import {
   ACCOUNT_ERROR_REASONS, DIFF_REASONS,
   cancelStocktake, confirmStocktake, createStocktake, getLossStats, getStocktake,
   listStocktakes, precheckStocktake, saveStocktakeItems, submitStocktake,
   type LossStatRow, type PrecheckResp, type StocktakeDetail, type StocktakeListRow,
 } from '@/api/stocktake'
+import {
+  dropOfflineTask, enqueueOffline, isNetworkError, onOfflineReplayed,
+} from '@/utils/offline-queue'
 
 /**
- * 盘点页(M2-4,对照 mockup p9):
+ * 盘点页(M2-4 桌面版 + M2-5 手机版,对照 mockup p9):
  * ⚡任务来源+编号流程条 → 新建盘点(选范围,系统快照账面)→ 盘点表格(账面带出,
  * 只填差异,差异行高亮+原因必选)→ 提交 → 五步向导(1 系统查账 / 2 归因汇总 /
  * 3 生成盘盈亏单[>¥50 红标老板确认] / 4-5 灰位标里程碑)→ 历史列表 + 损耗小结。
- * 桌面版为主;手机适配是并行票 M2-5,DOM 结构保持干净分块。
+ *
+ * M2-5 手机版(≤768px,铁律10):同一份数据两套 DOM——桌面表格不动,移动端换成
+ * 一行一 SKU 大卡片流(账面大字 + 差异数字键盘 + 原因大按钮);顶部条码/编号定位框
+ * (扫码枪回车 / BarcodeDetector 摄像头),底部固定大提交按钮;
+ * 录入实时写 localStorage 草稿,断网提交自动入离线队列(utils/offline-queue)。
  */
 
 // ============================== 机器主数据 ==============================
@@ -24,6 +31,21 @@ const machines = ref<Machine[]>([])
 async function loadMachines() {
   const page = await pageMachines({ current: 1, size: 100 })
   machines.value = page.records
+}
+
+/** 条码 → productId 映射(手机定位框扫条码用;盘点明细本身只带 skuCode) */
+const barcodeMap = ref<Record<string, number>>({})
+async function loadBarcodeMap() {
+  try {
+    const page = await pageProducts({ current: 1, size: 500 })
+    const map: Record<string, number> = {}
+    page.records.forEach((p) => {
+      if (p.barcode && p.id != null) map[String(p.barcode)] = p.id
+    })
+    barcodeMap.value = map
+  } catch {
+    /* 定位框退化为编号/名称匹配,不阻塞盘点 */
+  }
 }
 
 // ============================== 盘点列表 ==============================
@@ -102,6 +124,7 @@ async function openDetail(id: number) {
     offlineExempt: !!i.offlineExempt,
     diffAmount: i.diffAmount == null ? null : Number(i.diffAmount),
   }))
+  restoreDraft()
   precheck.value = null
   if (detail.value.stStatus === '待确认') await loadPrecheck()
 }
@@ -120,47 +143,222 @@ function resetAllMatch() {
   })
 }
 
-async function doSave(silent = false) {
-  if (!detail.value) return
+function validateDiffs(): boolean {
   const bad = diffRows.value.find((r) => !r.diffReason)
   if (bad) {
     ElMessage.warning(`差异行必选原因:${bad.productName || bad.productId}`)
     return false
   }
+  return true
+}
+
+function rowsPayload() {
+  return diffRows.value.map((r) => ({
+    productId: r.productId,
+    actualQty: r.actual,
+    diffReason: r.diffReason,
+    offlineExempt: r.offlineExempt,
+  }))
+}
+
+async function doSave(silent = false) {
+  if (!detail.value || !validateDiffs()) return false
   saving.value = true
   try {
-    await saveStocktakeItems(
-      detail.value.id,
-      diffRows.value.map((r) => ({
-        productId: r.productId,
-        actualQty: r.actual,
-        diffReason: r.diffReason,
-        offlineExempt: r.offlineExempt,
-      })),
-    )
+    await saveStocktakeItems(detail.value.id, rowsPayload())
     if (!silent) ElMessage.success(`已保存 ${diffRows.value.length} 行差异(其余视同相符)`)
     return true
+  } catch (e) {
+    // 断网/超时:入离线队列,恢复后自动重传(黄条见 App.vue)
+    if (isNetworkError(e)) {
+      enqueueOffline(
+        'stocktake-save',
+        `盘点差异保存 ${detail.value.stNo}(${diffRows.value.length} 行)`,
+        { id: detail.value.id, rows: rowsPayload() },
+        String(detail.value.id),
+      )
+      ElMessage.warning('网络不通:差异已离线暂存,恢复后自动重传(本机草稿也在)')
+      return false
+    }
+    throw e
   } finally {
     saving.value = false
   }
 }
 
 async function doSubmit() {
-  if (!detail.value) return
-  if (!(await doSave(true))) return
-  await submitStocktake(detail.value.id)
+  if (!detail.value || !validateDiffs()) return
+  const id = detail.value.id
+  saving.value = true
+  try {
+    await saveStocktakeItems(id, rowsPayload())
+    await submitStocktake(id)
+  } catch (e) {
+    if (isNetworkError(e)) {
+      // 提交任务自带最后一版差异,同单的暂存"保存"任务可清掉(不重复打)
+      dropOfflineTask('stocktake-save', String(id))
+      enqueueOffline(
+        'stocktake-submit',
+        `盘点提交 ${detail.value.stNo}(${diffRows.value.length} 行差异)`,
+        { id, rows: rowsPayload() },
+        String(id),
+      )
+      ElMessage.warning('网络不通:提交已离线暂存,恢复后自动重传')
+      return
+    }
+    throw e
+  } finally {
+    saving.value = false
+  }
+  clearDraft(id)
   ElMessage.success('已提交,进入五步向导——先看第 1 步系统查账')
   await loadList()
-  await openDetail(detail.value.id)
+  await openDetail(id)
 }
 
 async function doCancel() {
   if (!detail.value) return
   await ElMessageBox.confirm(`作废盘点单 ${detail.value.stNo}?未过账,可放心作废。`, '作废盘点', { type: 'warning' })
   await cancelStocktake(detail.value.id)
+  clearDraft(detail.value.id)
   ElMessage.success('已作废')
   detail.value = null
   await loadList()
+}
+
+// ============================== 手机版:草稿 + 定位 + 扫码(M2-5) ==============================
+
+/** 实盘录入实时写本机草稿(键=盘点单 id),刷新/闪退/断网都不丢 */
+const DRAFT_PREFIX = 'vend_st_draft_'
+const draftKey = (id: number) => DRAFT_PREFIX + id
+let restoringDraft = false
+
+function saveDraft() {
+  if (!detail.value || !editable.value || restoringDraft) return
+  const rows = editRows.value
+    .filter((r) => diffOf(r) !== 0 || r.diffReason || r.offlineExempt)
+    .map((r) => ({
+      productId: r.productId,
+      actual: r.actual,
+      diffReason: r.diffReason,
+      offlineExempt: r.offlineExempt,
+    }))
+  if (!rows.length) {
+    localStorage.removeItem(draftKey(detail.value.id))
+    return
+  }
+  localStorage.setItem(draftKey(detail.value.id), JSON.stringify({ savedAt: new Date().toISOString(), rows }))
+}
+
+function restoreDraft() {
+  if (!detail.value || detail.value.stStatus !== '进行中') return
+  const raw = localStorage.getItem(draftKey(detail.value.id))
+  if (!raw) return
+  try {
+    const draft = JSON.parse(raw) as { rows: { productId: number; actual: number; diffReason: string | null; offlineExempt: boolean }[] }
+    let hit = 0
+    restoringDraft = true
+    draft.rows.forEach((d) => {
+      const row = editRows.value.find((r) => r.productId === d.productId)
+      if (!row) return
+      row.actual = Number(d.actual)
+      row.diffReason = d.diffReason
+      row.offlineExempt = !!d.offlineExempt
+      hit++
+    })
+    restoringDraft = false
+    if (hit) ElMessage.info(`已恢复本机离线草稿 ${hit} 行(上次没提交完的接着盘)`)
+  } catch {
+    restoringDraft = false
+  }
+}
+
+function clearDraft(id: number) {
+  localStorage.removeItem(draftKey(id))
+}
+
+watch(editRows, () => saveDraft(), { deep: true })
+
+/** 定位框:扫码枪回车 / 手输编号·货道·名称 → 滚动定位到该 SKU 卡并聚焦实盘输入 */
+const locateQuery = ref('')
+const locatedId = ref<number | null>(null)
+
+function locateSku() {
+  const q = locateQuery.value.trim()
+  if (!q) return
+  const ql = q.toLowerCase()
+  const byBarcode = barcodeMap.value[q]
+  const row = editRows.value.find((r) =>
+    (byBarcode != null && r.productId === byBarcode)
+    || (r.skuCode || '').toLowerCase() === ql
+    || (r.slotNo || '').toLowerCase() === ql
+    || (r.productName || '').includes(q))
+  if (!row) {
+    ElMessage.warning(`本单 ${editRows.value.length} 个 SKU 里没找到「${q}」`)
+    return
+  }
+  locateQuery.value = '' // 清空,扫码枪连续扫下一件
+  locatedId.value = row.productId
+  nextTick(() => {
+    const el = document.getElementById('st-card-' + row.productId)
+    // 直接跳(不用 smooth):扫码枪连续扫时快;动画也会干扰自动化点击命中
+    el?.scrollIntoView({ block: 'center' })
+    const input = el?.querySelector<HTMLInputElement>('input.big-num-input')
+    input?.focus()
+    input?.select()
+  })
+}
+
+/** 摄像头扫码:原生 BarcodeDetector 可用才出 📷;不可用就藏(降级=定位框手输/扫码枪) */
+const scanSupported = typeof window !== 'undefined' && 'BarcodeDetector' in window
+const scanning = ref(false)
+const scanVideo = ref<HTMLVideoElement | null>(null)
+let scanStream: MediaStream | null = null
+let scanTimer: number | null = null
+
+async function startScan() {
+  try {
+    scanStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+  } catch {
+    ElMessage.warning('打不开摄像头(未授权?)——直接在定位框输编号也一样')
+    return
+  }
+  scanning.value = true
+  await nextTick()
+  if (scanVideo.value) scanVideo.value.srcObject = scanStream
+  const Detector = (window as any).BarcodeDetector
+  const detector = new Detector({ formats: ['ean_13', 'ean_8', 'code_128', 'upc_a', 'qr_code'] })
+  scanTimer = window.setInterval(async () => {
+    if (!scanVideo.value || scanVideo.value.readyState < 2) return
+    try {
+      const codes = await detector.detect(scanVideo.value)
+      if (codes.length) {
+        locateQuery.value = codes[0].rawValue
+        stopScan()
+        locateSku()
+      }
+    } catch {
+      /* 单帧识别失败继续轮询 */
+    }
+  }, 300)
+}
+
+function stopScan() {
+  if (scanTimer != null) {
+    clearInterval(scanTimer)
+    scanTimer = null
+  }
+  scanStream?.getTracks().forEach((t) => t.stop())
+  scanStream = null
+  scanning.value = false
+}
+
+/** 手机大数字输入:inputmode=numeric 拉起数字键盘,过滤非数字字符 */
+function onActualInput(row: EditRow, e: Event) {
+  const el = e.target as HTMLInputElement
+  const clean = el.value.replace(/[^\d.]/g, '')
+  if (clean !== el.value) el.value = clean
+  row.actual = clean === '' ? 0 : Number(clean)
 }
 
 // ============================== 五步向导 ==============================
@@ -235,12 +433,27 @@ const lossCard = (reasons: string[]) => {
   }
 }
 
+/** 离线队列重放成功 → 刷新列表/当前单(黄条清零由 App.vue 全局条负责) */
+const offReplay = onOfflineReplayed((task) => {
+  if (!task.type.startsWith('stocktake')) return
+  const payload = task.payload as { id: number }
+  if (task.type === 'stocktake-submit') clearDraft(payload.id)
+  loadList()
+  if (detail.value?.id === payload.id) openDetail(payload.id)
+})
+
 onMounted(() => {
   loadMachines()
+  loadBarcodeMap()
   loadList().then(() => {
     if (activeRow.value) openDetail(activeRow.value.id)
   })
   loadLossStats()
+})
+
+onUnmounted(() => {
+  stopScan()
+  offReplay()
 })
 </script>
 
@@ -304,6 +517,82 @@ onMounted(() => {
         <span class="hint">{{ detail.stNo }} · 快照 {{ detail.snapshotTime }} · {{ detail.sourceTask }}</span>
       </h3>
 
+      <!-- ============ 手机版卡片流(M2-5,≤768px 显示;桌面表格原样) ============ -->
+      <div class="m-only st-mobile" data-block="mobile-worksheet">
+        <div v-if="editable" class="locate-bar">
+          <input
+            v-model="locateQuery"
+            class="locate-input"
+            type="text"
+            enterkeyhint="search"
+            placeholder="🔍 扫条码 / 输编号·货道·品名,回车定位"
+            @keyup.enter="locateSku"
+          />
+          <button v-if="scanSupported" class="scan-btn" @click="startScan">📷</button>
+          <button class="locate-go" @click="locateSku">定位</button>
+        </div>
+        <div class="m-tip">💡 账面已带出,<b>只录对不上的</b>——一致的卡不用碰,提交时视同相符</div>
+        <div
+          v-for="row in editRows"
+          :id="'st-card-' + row.productId"
+          :key="row.productId"
+          class="st-card"
+          :class="{ located: locatedId === row.productId, changed: diffOf(row) !== 0 }"
+        >
+          <div class="st-card-head">
+            <b class="st-name">{{ row.productName || row.productId }}</b>
+            <span v-if="row.slotNo" class="chip c-blue">{{ row.slotNo }} 道</span>
+            <span class="chip st-diff-chip" :class="diffOf(row) === 0 ? 'c-green' : diffOf(row) < 0 ? 'c-red' : 'c-amber'">
+              {{ diffOf(row) === 0 ? '一致 ✓' : '差 ' + (diffOf(row) > 0 ? '+' : '') + diffOf(row) }}
+            </span>
+          </div>
+          <div class="st-card-nums">
+            <div class="st-book">
+              <span class="lab">账面</span>
+              <b class="num book-big" :class="row.bookQty < 0 ? 'neg-book' : ''">{{ row.bookQty }}</b>
+              <span v-if="row.bookQty < 0" class="mini">缺锚点</span>
+            </div>
+            <div class="st-actual">
+              <span class="lab">实盘(不对才改)</span>
+              <input
+                class="big-num-input"
+                type="text"
+                inputmode="numeric"
+                :disabled="!editable"
+                :value="row.actual"
+                @input="onActualInput(row, $event)"
+              />
+            </div>
+          </div>
+          <div v-if="diffOf(row) !== 0" class="st-reasons">
+            <button
+              v-for="r in DIFF_REASONS"
+              :key="r"
+              class="reason-btn"
+              :class="{ sel: row.diffReason === r }"
+              :disabled="!editable"
+              @click="row.diffReason = row.diffReason === r ? null : r"
+            >{{ r }}</button>
+            <button
+              v-if="detail.scopeType === '机器'"
+              class="reason-btn exempt"
+              :class="{ sel: row.offlineExempt }"
+              :disabled="!editable"
+              @click="row.offlineExempt = !row.offlineExempt"
+            >🏷 线下豁免</button>
+          </div>
+          <div v-if="diffOf(row) !== 0 && !row.diffReason" class="mini need-reason">⚠ 差异行必选原因才能提交</div>
+        </div>
+
+        <!-- 摄像头扫码浮层(BarcodeDetector 不可用时根本没有 📷 入口) -->
+        <div v-if="scanning" class="scan-overlay" @click.self="stopScan">
+          <video ref="scanVideo" autoplay playsinline class="scan-video"></video>
+          <div class="scan-hint">对准商品条码…识别后自动定位</div>
+          <button class="reason-btn scan-close" @click="stopScan">✕ 关闭</button>
+        </div>
+      </div>
+
+      <div class="st-desktop">
       <el-table :data="editRows" size="small" :row-class-name="rowClass">
         <el-table-column label="商品" min-width="170">
           <template #default="{ row }">
@@ -376,6 +665,15 @@ onMounted(() => {
         </el-button>
         <el-button type="danger" plain @click="doCancel">作废</el-button>
         <span class="mini">提交后进入五步向导:先由系统查账,再归因,再生成盘盈亏单</span>
+      </div>
+      </div><!-- /.st-desktop -->
+
+      <!-- 手机版底部固定大提交条(M2-5) -->
+      <div v-if="editable" class="m-only st-submit-bar">
+        <button class="bar-btn ghost" @click="resetAllMatch">✓ 全部一致</button>
+        <button class="bar-btn primary" :disabled="saving" @click="doSubmit">
+          提交盘点({{ diffRows.length }} 行差异)
+        </button>
       </div>
 
       <!-- 五步向导(mockup p9 五连横条;M2 开放 1-3 步,4/5 灰位) -->
@@ -584,6 +882,154 @@ onMounted(() => {
 .wz-body { font-size: 11.5px; margin-top: 6px; display: flex; flex-direction: column; gap: 4px; align-items: flex-start; }
 .wz-active .mini, .wz-now .mini, .wz-active .hint-line, .wz-now .hint-line { color: rgba(255, 255, 255, 0.92); }
 .hint-line { font-size: 11.5px; }
+
+/* ============ M2-5 手机版(≤768px):卡片流 + 大按钮 + 定位框 ============ */
+.m-only { display: none; }
+
+@media (max-width: 768px) {
+  .m-only { display: block; }
+  .st-desktop { display: none; } /* 桌面表格换成卡片流 */
+  .ledger-page { padding-bottom: 84px; } /* 给底部固定提交条让位 */
+  .ledger-title .sub { display: none; }
+  .flow-bar { flex-wrap: wrap; }
+  .flow-step { flex: 1 1 33%; border-radius: 0 !important; }
+  .grid-cols-2 { grid-template-columns: 1fr !important; } /* 历史+损耗竖排 */
+  .wizard-bar { flex-direction: column; }
+  .wz-step { border-radius: 0 !important; }
+  .wz-step + .wz-step { border-left: none; border-top: 2px dashed rgba(255, 255, 255, 0.5); }
+
+  /* 定位框:扫码枪回车即定位;摄像头可用才有 📷 */
+  .locate-bar {
+    position: sticky;
+    top: 52px; /* App.vue 手机顶栏高度 */
+    z-index: 6;
+    display: flex;
+    gap: 8px;
+    padding: 8px 0;
+    background: var(--card);
+  }
+  .locate-input {
+    flex: 1;
+    min-width: 0;
+    font-size: 16px; /* ≥16px 防 iOS 聚焦自动放大 */
+    padding: 12px 12px;
+    border: 2px solid var(--line2);
+    border-radius: 10px;
+    background: #fff;
+    color: var(--ink);
+  }
+  .locate-input:focus { outline: none; border-color: var(--green); }
+  .scan-btn, .locate-go {
+    flex-shrink: 0;
+    font-size: 16px;
+    padding: 0 16px;
+    border: none;
+    border-radius: 10px;
+    background: var(--green);
+    color: #fff;
+    font-weight: 700;
+  }
+  .scan-btn { background: var(--blue); font-size: 20px; }
+
+  .m-tip {
+    font-size: 12.5px;
+    color: var(--amber);
+    background: var(--amber-soft);
+    border-radius: 8px;
+    padding: 8px 12px;
+    margin: 8px 0 10px;
+  }
+
+  /* 一行一 SKU 大卡 */
+  .st-card {
+    border: 1.5px solid var(--line);
+    border-radius: 12px;
+    padding: 12px 14px;
+    margin-bottom: 10px;
+    background: #fff;
+  }
+  .st-card.changed { border-color: var(--amber); background: #fffaf2; }
+  .st-card.located { border-color: var(--green); box-shadow: 0 0 0 3px var(--green-soft); }
+  .st-card-head { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
+  .st-name { font-size: 16px; }
+  .st-diff-chip { margin-left: auto; font-size: 12.5px; }
+  .st-card-nums { display: flex; gap: 14px; margin-top: 10px; align-items: stretch; }
+  .st-book, .st-actual { flex: 1; display: flex; flex-direction: column; gap: 4px; }
+  .st-book .lab, .st-actual .lab { font-size: 11.5px; color: var(--ink2); }
+  .book-big { font-size: 28px; line-height: 1.2; }
+  .big-num-input {
+    width: 100%;
+    box-sizing: border-box;
+    font-family: var(--num);
+    font-size: 26px;
+    font-weight: 700;
+    text-align: center;
+    padding: 8px 6px;
+    border: 2px solid var(--line2);
+    border-radius: 10px;
+    color: var(--ink);
+    background: #fff;
+  }
+  .big-num-input:focus { outline: none; border-color: var(--green); }
+  .big-num-input:disabled { background: #f3f0e8; color: var(--ink2); }
+
+  /* 原因大按钮组(差异行才出现) */
+  .st-reasons { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+  .reason-btn {
+    font-size: 14px;
+    padding: 10px 14px;
+    border: 1.5px solid var(--line2);
+    border-radius: 10px;
+    background: #fff;
+    color: var(--ink);
+  }
+  .reason-btn.sel { background: var(--green); border-color: var(--green); color: #fff; font-weight: 700; }
+  .reason-btn.exempt.sel { background: var(--blue); border-color: var(--blue); }
+  .reason-btn:disabled { opacity: 0.5; }
+  .need-reason { color: var(--red); margin-top: 6px; }
+
+  /* 底部固定大提交条 */
+  .st-submit-bar {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    display: flex;
+    gap: 10px;
+    padding: 10px 14px calc(10px + env(safe-area-inset-bottom));
+    background: var(--card);
+    border-top: 1px solid var(--line);
+    box-shadow: 0 -2px 10px rgba(60, 50, 30, 0.08);
+  }
+  .bar-btn {
+    flex: 1;
+    font-size: 16px;
+    font-weight: 700;
+    padding: 14px 8px;
+    border-radius: 12px;
+    border: none;
+  }
+  .bar-btn.primary { background: var(--green); color: #fff; flex: 2; }
+  .bar-btn.primary:disabled { opacity: 0.6; }
+  .bar-btn.ghost { background: #fff; border: 1.5px solid var(--line2); color: var(--ink); }
+
+  /* 摄像头扫码浮层 */
+  .scan-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    background: rgba(0, 0, 0, 0.82);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 14px;
+  }
+  .scan-video { width: 88vw; max-height: 50vh; border-radius: 12px; }
+  .scan-hint { color: #fff; font-size: 14px; }
+  .scan-close { background: #fff; }
+}
 
 /* 损耗小结卡(mockup p9) */
 .loss-cards { display: flex; gap: 10px; margin: 12px 0; }
