@@ -21,6 +21,7 @@ const groups: { label?: string; items: { path?: string; ico: string; title: stri
     label: '日常台账',
     items: [
       { path: '/import', ico: '📥', title: '导入中心' },
+      { path: '/outbound', ico: '🚚', title: '出库上架' },
       { path: '/purchase', ico: '🚛', title: '采购入库' },
       { path: '/inventory', ico: '📦', title: '库存管理' },
       { path: '/stocktake', ico: '📋', title: '盘点' },

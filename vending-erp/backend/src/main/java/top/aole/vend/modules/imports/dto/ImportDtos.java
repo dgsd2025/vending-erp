@@ -80,6 +80,8 @@ public final class ImportDtos {
         private int matchedPrePending;
         /** 通道2:落机器快照条数 */
         private int snapshots;
+        /** 通道2:本次核销的 Pre-kit 配货单数(M2-3 afterImport 钩子) */
+        private int prekitVerified;
         /** 负库存红灯(待补录采购) */
         private List<NegativeStock> negativeStock = new ArrayList<>();
     }

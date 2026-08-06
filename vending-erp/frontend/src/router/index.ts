@@ -6,6 +6,7 @@ const router = createRouter({
     { path: '/', redirect: '/dashboard' },
     { path: '/dashboard', name: 'dashboard', meta: { title: '工作台' }, component: () => import('@/views/Dashboard.vue') },
     { path: '/import', name: 'import', meta: { title: '导入中心' }, component: () => import('@/views/Imports.vue') },
+    { path: '/outbound', name: 'outbound', meta: { title: '出库上架' }, component: () => import('@/views/Outbound.vue') },
     { path: '/products', name: 'products', meta: { title: '商品档案' }, component: () => import('@/views/Products.vue') },
     { path: '/products/:id', name: 'product-detail', meta: { title: '单品详情' }, component: () => import('@/views/ProductDetail.vue') },
     { path: '/machines/:id', name: 'machine-detail', meta: { title: '机器详情' }, component: () => import('@/views/MachineDetail.vue') },

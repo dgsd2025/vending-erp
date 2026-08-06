@@ -64,6 +64,21 @@
       "port": 5181
     },
     {
+      "name": "vend-frontend-m2-prekit",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "VITE_PROXY_TARGET=http://127.0.0.1:8092",
+        "pnpm",
+        "--dir",
+        "/Users/yh-1/系统开发/智慧园区/vending-erp/frontend",
+        "dev",
+        "--port",
+        "5183",
+        "--strictPort"
+      ],
+      "port": 5183
+    },
+    {
       "name": "vend-frontend-m110",
       "runtimeExecutable": "env",
       "runtimeArgs": [

@@ -45,6 +45,7 @@ import top.aole.vend.modules.imports.mapper.ImportErrorMapper;
 import top.aole.vend.modules.imports.mapper.ImportQueryMapper;
 import top.aole.vend.modules.imports.parser.ExcelParser;
 import top.aole.vend.modules.imports.parser.ParsedSheet;
+import top.aole.vend.modules.prekit.service.PrekitService;
 import top.aole.vend.modules.stock.domain.entity.SaleRecord;
 import top.aole.vend.modules.stock.domain.entity.StockLedger;
 import top.aole.vend.modules.stock.domain.entity.MachineStockSnapshot;
@@ -111,6 +112,8 @@ public class ImportService {
     private final DocService docService;
     private final StockService stockService;
     private final OpLogService opLogService;
+    /** M2-3:通道2导入完成后核销 Pre-kit 配货单(afterImport 钩子唯一挂点) */
+    private final PrekitService prekitService;
 
     private final ImportBatchMapper batchMapper;
     private final ImportErrorMapper errorMapper;
@@ -499,6 +502,9 @@ public class ImportService {
             ns.setBalance(new BigDecimal(row.get("balance").toString()));
             resp.getNegativeStock().add(ns);
         }
+
+        // M2-3 afterImport 钩子:配货单核销(±48h 窗口按机器×SKU 匹配本批转移单 → 带回率);同事务
+        resp.setPrekitVerified(prekitService.verifyAfterImport(batch.getId(), "导入通道2"));
 
         resp.setRowOk(ok);
         resp.setRowDup(dup);

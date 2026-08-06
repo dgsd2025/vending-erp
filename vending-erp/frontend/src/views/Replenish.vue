@@ -11,6 +11,7 @@ import {
   type ReplenishConfig, type Supplier,
 } from '@/api/basedata'
 import { createPurchaseOrder } from '@/api/purchase'
+import { generateTickets } from '@/api/prekit'
 
 /**
  * AI 补货提示页(M2-1/M2-2,对照 mockup p2):
@@ -68,6 +69,29 @@ const machineGroups = computed(() => {
 })
 const machineChecked = reactive<Record<number, boolean>>({})
 const machineCheckedCount = computed(() => machineRows.value.filter((r) => machineChecked[r.id]).length)
+
+// ---------- 机器侧 → 生成配货单(M2-3 真通) ----------
+const prekitLoading = ref(false)
+async function doGeneratePrekit() {
+  const checked = machineRows.value.filter((r) => machineChecked[r.id])
+  if (checked.length === 0) {
+    ElMessage.warning('先勾选机器侧建议行')
+    return
+  }
+  prekitLoading.value = true
+  try {
+    const resp = await generateTickets(checked.map((r) => ({ planId: r.id })))
+    for (const r of checked) machineChecked[r.id] = false
+    await load()
+    await ElMessageBox.confirm(
+      `已按机器分组生成 ${resp.ticketIds.length} 张配货单(共 ${resp.itemCount} 行,带出量在出库上架页可改)。仓库照单装箱后标记「已执行」,次日导入后台补货记录自动核销算带回率。`,
+      '🧺 配货单已生成',
+      { confirmButtonText: '去出库上架页', cancelButtonText: '留在本页', type: 'success' },
+    ).then(() => router.push('/outbound')).catch(() => undefined)
+  } finally {
+    prekitLoading.value = false
+  }
+}
 
 // ---------- 仓库侧 ----------
 const purchaseRows = computed(() => (purchaseData.value?.rows ?? []).filter((r) => r.planStatus !== '已忽略'))
@@ -332,12 +356,15 @@ const trim = (v: number | string | null | undefined) =>
         </el-card>
 
         <div v-if="machineGroups.length" class="flex items-center gap-12px">
-          <el-tooltip content="配货单(pre-kit)= M2-3 票,开发中;上线后勾选行一键生成按机器分组的拣货单" placement="top">
-            <span>
-              <el-button type="primary" disabled>🧺 生成配货单(已勾 {{ machineCheckedCount }} 行)· 配货单票开发中</el-button>
-            </span>
-          </el-tooltip>
-          <span class="mini">配货单 = 补货员照单从仓库装箱,到机器直接开箱补(pre-kit,不用现场数货)</span>
+          <el-button
+            type="primary"
+            :disabled="isStale || machineCheckedCount === 0"
+            :loading="prekitLoading"
+            @click="doGeneratePrekit"
+          >
+            🧺 生成配货单(已勾 {{ machineCheckedCount }} 行)
+          </el-button>
+          <span class="mini">配货单 = 补货员照单从仓库装箱,到机器直接开箱补(pre-kit,不用现场数货);按机分组,生成后建议行标「已生成配货单」</span>
         </div>
       </el-tab-pane>
 

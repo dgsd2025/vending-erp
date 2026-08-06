@@ -1,0 +1,501 @@
+<script setup lang="ts">
+import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import {
+  createManualTransfer, executeTicket, listTickets, listTransfers, ticketDetail, updateItemQty,
+  verifyTicket, type PrekitItemRow, type PrekitTicketDetail, type PrekitTicketRow, type TransferRow,
+} from '@/api/prekit'
+import { pageMachines, pageProducts, type Machine, type Product } from '@/api/basedata'
+import DocDetailDrawer from '@/components/doc/DocDetailDrawer.vue'
+
+/**
+ * 出库上架页(M2-3,对照 mockup p5):货流两段式的交接点。
+ * 配货单闭环:补货建议 → 按机装箱(pre-kit)→ 到机上架 → 次日导入核销(带回率);
+ * 转移单唯一生产者 = 后台补货记录导入(P0-4),手工录单仅兜底(预挂单机制)。
+ */
+
+const loading = ref(false)
+const tickets = ref<PrekitTicketRow[]>([])
+const transfers = ref<TransferRow[]>([])
+const statusFilter = ref<string>('')
+
+async function load() {
+  loading.value = true
+  try {
+    const [t, tr] = await Promise.all([listTickets(statusFilter.value || undefined), listTransfers()])
+    tickets.value = t
+    transfers.value = tr
+  } finally {
+    loading.value = false
+  }
+}
+onMounted(load)
+
+// ---------- 机器/商品档案(手工录单选项) ----------
+const machines = ref<Machine[]>([])
+const products = ref<Product[]>([])
+let mapsLoaded = false
+async function loadMaps() {
+  if (mapsLoaded) return
+  const [m, p] = await Promise.all([
+    pageMachines({ current: 1, size: 200 }),
+    pageProducts({ current: 1, size: 500 }),
+  ])
+  machines.value = m.records
+  products.value = p.records
+  mapsLoaded = true
+}
+
+// ---------- 配货单状态样式 ----------
+const statusChip = (s: string) =>
+  s === '已核销' ? 'success' : s === '有差异' ? 'danger' : s === '已执行' ? 'warning' : 'info'
+const ratePct = (v: number | string | null | undefined) =>
+  v == null ? '—' : `${(Number(v) * 100).toFixed(1)}%`
+const n = (v: number | string | null | undefined) =>
+  v == null ? '—' : Number(v).toLocaleString(undefined, { maximumFractionDigits: 1 })
+const dt = (v: string | null | undefined) => (v ? v.replace('T', ' ').slice(0, 16) : '—')
+
+// ---------- 配货单详情(打印友好) ----------
+const detailVisible = ref(false)
+const detailLoading = ref(false)
+const detail = ref<PrekitTicketDetail | null>(null)
+const qtyEdit = reactive<Record<number, number>>({})
+async function openDetail(row: PrekitTicketRow | { id: number }) {
+  detailVisible.value = true
+  detailLoading.value = true
+  try {
+    detail.value = await ticketDetail(row.id)
+    for (const item of detail.value.items) qtyEdit[item.id] = Number(item.qtyPlanned)
+  } finally {
+    detailLoading.value = false
+  }
+}
+const detailHead = computed(() => detail.value?.head ?? null)
+const editable = computed(() => detail.value?.ticket.ticketStatus === '已生成')
+
+/** 改带出量(仅「已生成」;change 即提交) */
+async function saveQty(item: PrekitItemRow) {
+  const v = qtyEdit[item.id]
+  if (v == null || v <= 0 || v === Number(item.qtyPlanned)) return
+  await updateItemQty(item.id, v)
+  ElMessage.success(`「${item.productName}」带出量已改为 ${v}(op_log 留痕)`)
+  await openDetail({ id: item.ticketId })
+  await load()
+}
+
+async function doExecute(id: number, ticketNo: string) {
+  await ElMessageBox.confirm(
+    `标记「${ticketNo}」已执行?表示仓库已照单装箱出发——执行后带出量冻结,差异走次日核销。`,
+    '🚚 装箱出发',
+    { confirmButtonText: '已装箱出发', cancelButtonText: '再想想', type: 'warning' },
+  )
+  await executeTicket(id)
+  ElMessage.success('已标记执行(执行人/时间已留痕)。次日导入后台《系统补货记录》自动核销。')
+  await load()
+  if (detailVisible.value) await openDetail({ id })
+}
+
+async function doVerify(row: PrekitTicketRow) {
+  const r = await verifyTicket(row.id)
+  if (r.matched) {
+    ElMessage.success('核销完成,带回率已计算')
+  } else {
+    ElMessage.warning(r.message ?? '±48h 窗口内没有可匹配的导入转移单')
+  }
+  await load()
+}
+
+function printTicket() {
+  window.print()
+}
+
+// ---------- 转移单卡 ----------
+const docDrawerVisible = ref(false)
+const docDrawerId = ref<number | null>(null)
+function openDoc(id: number) {
+  docDrawerId.value = id
+  docDrawerVisible.value = true
+}
+const transferStatus = (row: TransferRow) => {
+  if (row.docStatus === '已作废' && row.matchedDocId) return { label: '已冲抵', type: 'info' as const, tip: `预挂单已被导入转移单 #${row.matchedDocId} 冲抵(P0-4 不双扣)` }
+  if (row.docStatus === '预挂单') return { label: '预挂单', type: 'warning' as const, tip: '手工单只锁仓库侧,待次日后台补货记录导入自动冲抵;超 48h 自动转正' }
+  if (row.docStatus === '已确认') return { label: '已确认', type: 'success' as const, tip: '' }
+  return { label: row.docStatus, type: 'info' as const, tip: '' }
+}
+
+// ---------- 手工转移单录入(兜底) ----------
+const manualVisible = ref(false)
+const manualSaving = ref(false)
+const manualForm = reactive({
+  docType: '出库上架',
+  machineId: null as number | null,
+  bizDate: new Date().toISOString().slice(0, 10),
+  remark: '',
+  items: [{ productId: null as number | null, qty: 1, slotNo: '' }],
+})
+async function openManual() {
+  await loadMaps()
+  manualForm.items = [{ productId: null, qty: 1, slotNo: '' }]
+  manualForm.remark = ''
+  manualVisible.value = true
+}
+function addManualRow() {
+  manualForm.items.push({ productId: null, qty: 1, slotNo: '' })
+}
+async function submitManual() {
+  if (!manualForm.machineId) {
+    ElMessage.warning('请选择机器')
+    return
+  }
+  const items = manualForm.items.filter((i) => i.productId && i.qty > 0)
+  if (items.length === 0) {
+    ElMessage.warning('至少录一行商品+数量')
+    return
+  }
+  manualSaving.value = true
+  try {
+    const r = await createManualTransfer({
+      docType: manualForm.docType,
+      machineId: manualForm.machineId,
+      bizDate: manualForm.bizDate,
+      remark: manualForm.remark || undefined,
+      items: items.map((i) => ({ productId: i.productId!, qty: i.qty, slotNo: i.slotNo || undefined })),
+    })
+    manualVisible.value = false
+    ElMessage.success(
+      r.docStatus === '预挂单'
+        ? `${r.docNo} 已确认为「预挂单」:仓库侧已锁定,将待次日后台补货记录导入自动冲抵`
+        : `${r.docNo} 已确认过账(${r.docStatus})`,
+    )
+    await load()
+  } finally {
+    manualSaving.value = false
+  }
+}
+</script>
+
+<template>
+  <div class="ledger-page" v-loading="loading">
+    <div class="ledger-crumb">园区小卖 ERP / 日常台账 / 出库上架</div>
+    <div class="ledger-title">
+      <h2>出库上架</h2>
+      <span class="sub">货流两段式:大仓是蓄水池(公式算该蓄多少),机器是水杯(每天倒满不空)</span>
+    </div>
+    <p class="ledger-note">
+      两段的交接点 = <b>出库上架转移单</b>(唯一生产者 = 后台补货记录导入);配货单(pre-kit)= 补货员照单从仓库装箱,到机器直接开箱补,不现场数货。
+    </p>
+
+    <!-- ⚡任务来源 + 编号流程条(七律#2:领着人干活) -->
+    <el-alert type="info" :closable="false" class="mb-12px">
+      <template #title>
+        <span>⚡ 任务:补货闭环四步,带回率是补货 PDCA 的核心指标(核销自动算)</span>
+        <div class="flow-bar">
+          <span>① 补货建议(AI 补货页勾选)</span>
+          <span>② 配货单装箱(标记已执行)</span>
+          <span>③ 到机上架(后台自动记录)</span>
+          <span>④ 次日导入核销(±48h 窗口 · 差量=带回)</span>
+        </div>
+      </template>
+    </el-alert>
+
+    <!-- ============ 配货单列表卡 ============ -->
+    <el-card shadow="never" class="mb-12px print-hide">
+      <div class="flex items-center gap-12px mb-8px flex-wrap">
+        <b>🧺 Pre-kit 配货单</b>
+        <el-radio-group v-model="statusFilter" size="small" @change="load">
+          <el-radio-button value="">全部</el-radio-button>
+          <el-radio-button value="已生成">已生成</el-radio-button>
+          <el-radio-button value="已执行">已执行</el-radio-button>
+          <el-radio-button value="已核销">已核销</el-radio-button>
+          <el-radio-button value="有差异">有差异</el-radio-button>
+        </el-radio-group>
+        <span class="mini" style="margin-left: auto">来源:AI 补货页 → 机器侧勾选行 →「生成配货单」</span>
+      </div>
+      <el-table :data="tickets" size="small">
+        <el-table-column label="配货单号" width="150">
+          <template #default="{ row }">
+            <a class="name-link" @click="openDetail(row)"><span class="num">{{ row.ticketNo }}</span></a>
+          </template>
+        </el-table-column>
+        <el-table-column label="机器" min-width="120">
+          <template #default="{ row }">{{ row.machineName ?? '机器#' + row.machineId }}</template>
+        </el-table-column>
+        <el-table-column prop="planDate" label="配货日" width="100" />
+        <el-table-column label="SKU 数 / 计划带出" align="right" width="130">
+          <template #default="{ row }">
+            <span class="num">{{ row.itemCount }} 项 · {{ n(row.totalPlanned) }} 件</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="160">
+          <template #default="{ row }">
+            <el-tag :type="statusChip(row.ticketStatus)" size="small">{{ row.ticketStatus }}</el-tag>
+            <el-tooltip v-if="row.overdue" content="配货日已过 48h 核销窗口仍未等到后台补货记录——去导入中心导《系统补货记录》,或点「手动核销」重扫" placement="top">
+              <el-tag type="warning" size="small" class="ml-4px">⚠️ 超窗未核销</el-tag>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column label="带回率" align="right" width="90">
+          <template #default="{ row }">
+            <b class="num" :style="{ color: Number(row.takebackRate) > 0 ? 'var(--amber)' : 'var(--green)' }">
+              {{ ratePct(row.takebackRate) }}
+            </b>
+          </template>
+        </el-table-column>
+        <el-table-column label="执行 / 核销时间" width="150">
+          <template #default="{ row }">
+            <div class="mini">执 {{ dt(row.execAt) }}</div>
+            <div class="mini">核 {{ dt(row.verifyAt) }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="200">
+          <template #default="{ row }">
+            <el-button link type="primary" size="small" @click="openDetail(row)">详情/打印</el-button>
+            <el-button v-if="row.ticketStatus === '已生成'" link type="warning" size="small" @click="doExecute(row.id, row.ticketNo)">
+              标记已执行
+            </el-button>
+            <el-button v-if="row.overdue" link type="danger" size="small" @click="doVerify(row)">手动核销</el-button>
+          </template>
+        </el-table-column>
+        <template #empty>
+          <el-empty description="暂无配货单:去「AI 补货提示 → 机器侧」勾选建议行,点「生成配货单」" :image-size="60" />
+        </template>
+      </el-table>
+      <p class="mini mt-8px">
+        💡 带回率 = Σ带回 ÷ Σ带出(带出没上架的比例)。核销 = 次日(±48h 窗口)导入的转移单按 <b>机器×SKU</b> 自动匹配,差量记带回——这是补货 PDCA 的唯一数据生产者。
+      </p>
+    </el-card>
+
+    <!-- ============ 转移单列表卡 ============ -->
+    <el-card shadow="never" class="mb-12px print-hide">
+      <div class="flex items-center gap-12px mb-8px">
+        <b>📄 转移单(仓库 → 机器)</b>
+        <span class="mini">唯一生产者 = 导入中心通道②《系统补货记录》;负数补货 = 退库取回</span>
+        <el-button size="small" style="margin-left: auto" @click="openManual">✍️ 手工录入(兜底)</el-button>
+      </div>
+      <el-table :data="transfers" size="small" max-height="420">
+        <el-table-column label="单号" width="160">
+          <template #default="{ row }">
+            <a class="name-link" @click="openDoc(row.id)"><span class="num mini">{{ row.docNo }}</span></a>
+          </template>
+        </el-table-column>
+        <el-table-column prop="bizDate" label="业务日期" width="100" />
+        <el-table-column label="机器" min-width="110">
+          <template #default="{ row }">{{ row.machineName ?? (row.machineId ? '机器#' + row.machineId : '—') }}</template>
+        </el-table-column>
+        <el-table-column label="类型" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.docType === '退库' ? 'warning' : 'primary'" size="small" effect="plain">{{ row.docType }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="品项 / 件数" align="right" width="110">
+          <template #default="{ row }">
+            <span class="num">{{ row.itemCount }} · {{ n(row.totalQty) }}</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="来源" width="100">
+          <template #default="{ row }">
+            <el-tag :type="row.docSource === '导入' ? 'success' : 'info'" size="small" effect="plain">
+              {{ row.docSource === '导入' ? '后台导入' : '手工录入' }}
+            </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="110">
+          <template #default="{ row }">
+            <el-tooltip :content="transferStatus(row).tip" :disabled="!transferStatus(row).tip" placement="top">
+              <el-tag :type="transferStatus(row).type" size="small">{{ transferStatus(row).label }}</el-tag>
+            </el-tooltip>
+          </template>
+        </el-table-column>
+        <el-table-column prop="remark" label="备注" min-width="150" show-overflow-tooltip />
+        <template #empty>
+          <el-empty description="暂无转移单:去导入中心导后台《系统补货记录》自动生成" :image-size="60" />
+        </template>
+      </el-table>
+      <p class="mini mt-8px">
+        💡 「手工录入」仅兜底(后台漏记/机器故障线下补货等):出库上架确认后进<b>「预挂单」</b>——只锁仓库侧,将待次日后台补货记录导入自动冲抵(不双扣);超 48h 无后台记录才转正补机器账。
+      </p>
+    </el-card>
+
+    <p class="ledger-foot-note print-hide">— 两级库存:仓库账在这里,机内账以厂家后台为准,系统只做核对与告警 —</p>
+
+    <!-- ============ 配货单详情(按机打印友好视图) ============ -->
+    <el-dialog v-model="detailVisible" width="760px" top="4vh" class="print-area">
+      <template #header>
+        <span style="font-weight: 700">
+          🧺 {{ detail?.ticket.ticketNo ?? '配货单' }}
+          <el-tag v-if="detail" :type="statusChip(detail.ticket.ticketStatus)" size="small" class="ml-4px">
+            {{ detail.ticket.ticketStatus }}
+          </el-tag>
+        </span>
+      </template>
+      <div v-loading="detailLoading">
+        <template v-if="detail">
+          <div class="ticket-head">
+            <div>
+              <div class="mini">目标机器(一机一箱)</div>
+              <b style="font-size: 16px">📦 {{ detailHead?.machineName ?? '机器#' + detail.ticket.machineId }}</b>
+            </div>
+            <div>
+              <div class="mini">配货日期</div>
+              <b class="num">{{ detail.ticket.planDate }}</b>
+            </div>
+            <div>
+              <div class="mini">执行 / 核销</div>
+              <span class="mini">执 {{ dt(detail.ticket.execAt) }} · 核 {{ dt(detail.ticket.verifyAt) }}</span>
+            </div>
+            <div v-if="detail.ticket.takebackRate != null">
+              <div class="mini">带回率</div>
+              <b class="num" :style="{ color: Number(detail.ticket.takebackRate) > 0 ? 'var(--amber)' : 'var(--green)' }">
+                {{ ratePct(detail.ticket.takebackRate) }}
+              </b>
+            </div>
+          </div>
+          <el-table :data="detail.items" size="small" class="mt-8px">
+            <el-table-column label="商品(照单装箱)" min-width="170">
+              <template #default="{ row }">
+                <b>{{ row.productName }}</b>
+                <div class="mini">{{ row.skuCode }}{{ row.barcode ? ' · ' + row.barcode : '' }}</div>
+              </template>
+            </el-table-column>
+            <el-table-column label="带出量" align="right" width="130">
+              <template #default="{ row }">
+                <el-input-number
+                  v-if="editable"
+                  v-model="qtyEdit[row.id]"
+                  :min="0.001"
+                  :precision="1"
+                  size="small"
+                  style="width: 110px"
+                  @change="saveQty(row)"
+                />
+                <b v-else class="num">{{ n(row.qtyPlanned) }} {{ row.unit }}</b>
+              </template>
+            </el-table-column>
+            <el-table-column label="仓库最早入库" width="120">
+              <template #default="{ row }">
+                <el-tooltip content="FEFO 先出旧货:装箱时优先拿最早入库那批(提示级,完整批次管理后续里程碑)" placement="top">
+                  <el-tag v-if="row.fefoEarliestInDate" size="small" type="info" effect="plain">
+                    🗓 {{ String(row.fefoEarliestInDate).slice(5) }} 起
+                  </el-tag>
+                  <span v-else class="mini">—</span>
+                </el-tooltip>
+              </template>
+            </el-table-column>
+            <el-table-column label="实上架" align="right" width="80">
+              <template #default="{ row }">
+                <span class="num">{{ row.qtyLoaded == null ? '—' : n(row.qtyLoaded) }}</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="带回" align="right" width="80">
+              <template #default="{ row }">
+                <b v-if="row.qtyTakeback != null && Number(row.qtyTakeback) > 0" class="num" style="color: var(--amber)">
+                  {{ n(row.qtyTakeback) }}
+                </b>
+                <span v-else class="num">{{ row.qtyTakeback == null ? '—' : 0 }}</span>
+              </template>
+            </el-table-column>
+          </el-table>
+          <p class="mini mt-8px">
+            🧺 装箱提示:一机一箱按单拣货;<b>先出旧货(FEFO)</b>;带出量在装箱前可改,执行后冻结。实上架/带回两列由次日导入自动核销回填。
+          </p>
+        </template>
+      </div>
+      <template #footer>
+        <span class="print-hide">
+          <el-button @click="printTicket">🖨 打印拣货单</el-button>
+          <el-button
+            v-if="detail?.ticket.ticketStatus === '已生成'"
+            type="warning"
+            @click="doExecute(detail!.ticket.id, detail!.ticket.ticketNo)"
+          >
+            🚚 标记已执行(装箱出发)
+          </el-button>
+          <el-button @click="detailVisible = false">关闭</el-button>
+        </span>
+      </template>
+    </el-dialog>
+
+    <!-- ============ 手工转移单录入(兜底) ============ -->
+    <el-dialog v-model="manualVisible" width="640px" title="✍️ 手工转移单(兜底)">
+      <el-alert type="warning" :closable="false" class="mb-12px">
+        <template #title>
+          转移单唯一生产者 = 后台补货记录导入。手工录入仅兜底:<b>出库上架确认后进「预挂单」</b>,
+          只锁仓库侧,将待次日后台补货记录导入自动冲抵(不双扣);超 48h 无后台记录自动转正。
+        </template>
+      </el-alert>
+      <el-form label-width="90px" size="small">
+        <el-form-item label="类型">
+          <el-radio-group v-model="manualForm.docType">
+            <el-radio-button value="出库上架">出库上架(仓库→机器)</el-radio-button>
+            <el-radio-button value="退库">退库(机器→仓库)</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="机器">
+          <el-select v-model="manualForm.machineId" filterable placeholder="选择机器" style="width: 260px">
+            <el-option v-for="m in machines" :key="m.id" :label="m.machineName" :value="m.id!" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="业务日期">
+          <el-date-picker v-model="manualForm.bizDate" type="date" value-format="YYYY-MM-DD" style="width: 160px" />
+        </el-form-item>
+        <el-form-item label="明细">
+          <div style="width: 100%">
+            <div v-for="(it, i) in manualForm.items" :key="i" class="flex items-center gap-8px mb-6px">
+              <el-select v-model="it.productId" filterable placeholder="商品" style="flex: 1">
+                <el-option v-for="p in products" :key="p.id" :label="p.productName" :value="p.id!" />
+              </el-select>
+              <el-input-number v-model="it.qty" :min="0.001" :precision="1" style="width: 120px" />
+              <el-input v-model="it.slotNo" placeholder="货道(选填)" style="width: 100px" />
+              <el-button link type="danger" :disabled="manualForm.items.length === 1" @click="manualForm.items.splice(i, 1)">✕</el-button>
+            </div>
+            <el-button size="small" @click="addManualRow">+ 加一行</el-button>
+          </div>
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="manualForm.remark" placeholder="为什么手工录?(如:后台漏记 / 机器故障线下补货)" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="manualVisible = false">取消</el-button>
+        <el-button type="primary" :loading="manualSaving" @click="submitManual">确认录入(自动过账)</el-button>
+      </template>
+    </el-dialog>
+
+    <DocDetailDrawer v-model="docDrawerVisible" :doc-id="docDrawerId" />
+  </div>
+</template>
+
+<style scoped>
+.flow-bar {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 6px;
+  font-size: 12px;
+}
+.flow-bar span {
+  padding: 2px 10px;
+  border-radius: 12px;
+  background: #eee9dd;
+  color: #7c745f;
+}
+.ticket-head {
+  display: flex;
+  gap: 28px;
+  flex-wrap: wrap;
+  align-items: flex-end;
+  padding: 10px 14px;
+  background: #f8f5ec;
+  border-radius: 8px;
+}
+.name-link {
+  color: var(--green, #2f6e52);
+  cursor: pointer;
+  font-weight: 600;
+}
+@media print {
+  .print-hide {
+    display: none !important;
+  }
+}
+</style>
