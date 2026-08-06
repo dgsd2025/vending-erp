@@ -14,6 +14,7 @@ import top.aole.vend.modules.doc.dto.DocItemReq;
 import top.aole.vend.modules.doc.mapper.DocHeadMapper;
 import top.aole.vend.modules.doc.mapper.DocQueryMapper;
 import top.aole.vend.modules.period.service.PeriodLockService;
+import top.aole.vend.modules.settle.service.SettleBillService;
 import top.aole.vend.modules.stock.service.StockService;
 
 import java.math.BigDecimal;
@@ -36,8 +37,8 @@ import java.util.stream.Collectors;
  *   **免负库存拦截**(neg_stock_exempt),过账走既有"单据已确认"事件;原单 → 已红冲;
  * - 必过"影响清单"确认页:库存变动/应付影响(M3 前只展示未启用)/毛利影响 → 前端确认后才真执行;
  * - 锁账线之前的单据禁红冲(P0-2):老板角色越权(占位)+强制备注放行;
- * - 已付款单的应付红字(settle_bill.direction=红字 冲下一单)→ M3 实装,见 execute() 内 TODO;
- *   状态机通道已验证不被堵死(采购单 已确认→已红冲 与 已确认→待结算→… 平行,互不封路)。
+ * - 应付红字连锁(§13.2-1,M3-2 已实装):采购单红冲连带应付侧——未付款 → 结算单作废+抵扣释放;
+ *   已付款 → 生成 settle_bill(direction=红字)冲抵下一单,不动已完成付款(SettleBillService)。
  */
 @Service
 @RequiredArgsConstructor
@@ -50,6 +51,7 @@ public class RedFlushService {
     private final DocQueryMapper docQueryMapper;
     private final StockService stockService;
     private final PeriodLockService periodLockService;
+    private final SettleBillService settleBillService;
 
     // ============================== 影响清单(确认页取数) ==============================
 
@@ -69,11 +71,11 @@ public class RedFlushService {
         if (type == DocType.RED_FLUSH || type == DocType.COST_ADJUST || type == DocType.CASH_ADJUST) {
             blockers.add("红冲单/调整单不允许再红冲,请对原业务单据重新操作");
         }
-        if (origin.getDocStatus() == DocStatus.PENDING_SETTLE || origin.getDocStatus() == DocStatus.SETTLED) {
-            blockers.add(String.format("已进入应付结算链(状态[%s])=有下游动作:红冲需连带应付红字(settle_bill.direction),M3 开通",
-                    origin.getDocStatus().getLabel()));
-        } else if (origin.getDocStatus() != DocStatus.CONFIRMED) {
-            blockers.add(String.format("仅[已确认]状态可整单红冲,当前状态[%s]", origin.getDocStatus().getLabel()));
+        // M3-2 应付红字通道已开通:待结算/已结算不再拦截,红冲连带应付侧连锁(见 payableImpact)
+        if (origin.getDocStatus() != DocStatus.CONFIRMED
+                && origin.getDocStatus() != DocStatus.PENDING_SETTLE
+                && origin.getDocStatus() != DocStatus.SETTLED) {
+            blockers.add(String.format("仅[已确认/待结算/已结算]状态可整单红冲,当前状态[%s]", origin.getDocStatus().getLabel()));
         }
         List<Map<String, Object>> matched = docQueryMapper.matchedByPending(originDocId);
         if (!matched.isEmpty()) {
@@ -115,13 +117,13 @@ public class RedFlushService {
         }
         p.setStockChanges(stockChanges);
 
-        // ---------- 应付影响(M3 前只展示"应付链未启用") ----------
+        // ---------- 应付影响(M3-2 已启用:未付→结算单作废释放抵扣;已付→生成应付红字冲下一单) ----------
         if (origin.getSupplierId() != null
                 && (type == DocType.PURCHASE_IN || type == DocType.RETURN_BACK)) {
             Map<String, Object> payable = new HashMap<>();
-            payable.put("enabled", false);
-            payable.put("note", "应付链未启用(M3):启用后红冲将连带应付红字(settle_bill.direction=红字)冲下一单;"
-                    + "当前应付余额为实时推算(期初+Σ采购−Σ退货−Σ抵扣−Σ付款),红冲落账后自动反映");
+            payable.put("enabled", true);
+            payable.put("note", settleBillService.previewPurchaseRedFlushChain(originDocId)
+                    + ";应付余额为实时推算(期初+Σ采购−Σ退货−Σ抵扣−Σ付款),红冲落账后自动反映");
             payable.put("wouldReverseAmount",
                     origin.getTotalAmount() == null ? BigDecimal.ZERO : origin.getTotalAmount().negate());
             p.setPayableImpact(payable);
@@ -206,9 +208,12 @@ public class RedFlushService {
         // PurchaseReceiptListener 红冲分支回冲订货单已收量(在途恢复)。同事务,任一失败整体回滚。
         docService.confirm(redDocId, userId, true, null);
 
-        // TODO(M3 应付红字通道):原单若已付款/已结算,红冲需连带生成 settle_bill(direction=红字)冲下一单。
-        //   M1-7 状态机已验证通道不堵死(PENDING_SETTLE/SETTLED 在 preview 中被列为下游动作拦截,
-        //   M3 把该拦截替换为"红冲+自动生成应付红字"的连锁事务)。
+        // M3-2 应付红字连锁(§13.2-1,原 M3 TODO 实装):采购单红冲连带应付侧——
+        // 未付款 → 结算单作废+抵扣释放;已付款 → 生成 settle_bill(direction=红字)冲抵下一单(不动已完成付款)。
+        // 连锁明细由 SettleBillService 落 op_log(结算单/红字维度),此处不拼进 reason(op_log.action 有长度上限)。
+        if (origin.getSupplierId() != null && origin.getDocType() == DocType.PURCHASE_IN) {
+            settleBillService.onPurchaseRedFlush(originDocId, redDocId, userId, "红冲连锁");
+        }
 
         docService.markRedFlushed(originDocId, userId, reason.trim());
         return redDocId;

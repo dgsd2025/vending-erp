@@ -39,8 +39,9 @@ public final class DocStateMachine {
         BASE.put(CONFIRMED, EnumSet.of(COMPLETED, RED_FLUSHED));
 
         PURCHASE_EXTRA.put(CONFIRMED, EnumSet.of(PENDING_SETTLE, COMPLETED, RED_FLUSHED));
-        PURCHASE_EXTRA.put(PENDING_SETTLE, EnumSet.of(SETTLED));
-        PURCHASE_EXTRA.put(SETTLED, EnumSet.of(COMPLETED));
+        // M3-2 红冲连锁开通:待结算/已结算也可红冲(未付→结算单作废释放抵扣;已付→生成应付红字冲下一单)
+        PURCHASE_EXTRA.put(PENDING_SETTLE, EnumSet.of(SETTLED, RED_FLUSHED));
+        PURCHASE_EXTRA.put(SETTLED, EnumSet.of(COMPLETED, RED_FLUSHED));
 
         TRANSFER_EXTRA.put(PENDING_CONFIRM, EnumSet.of(CONFIRMED, PRE_PENDING, DRAFT, VOID));
         TRANSFER_EXTRA.put(PRE_PENDING, EnumSet.of(CONFIRMED, VOID));

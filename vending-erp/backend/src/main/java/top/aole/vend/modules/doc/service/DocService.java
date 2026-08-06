@@ -288,6 +288,20 @@ public class DocService {
         return generateDocNo(type, bizDate);
     }
 
+    // ============================== M3-2 应付链状态通道(仅供 settle 模块调用) ==============================
+
+    /** 采购单进入应付环节:已确认 → 待结算(老板复核结算单时由 SettleBillService 调用) */
+    @Transactional(rollbackFor = Exception.class)
+    public void markPendingSettle(Long docId, Long userId) {
+        transition(mustGet(docId), DocStatus.PENDING_SETTLE, userId, "进入应付结算");
+    }
+
+    /** 付款核销完成:待结算 → 已结算(全链单据闭环,§9.2 结算完成) */
+    @Transactional(rollbackFor = Exception.class)
+    public void markSettled(Long docId, Long userId) {
+        transition(mustGet(docId), DocStatus.SETTLED, userId, "付款核销·已结算");
+    }
+
     // ============================== 查询 ==============================
 
     public DocDetail getDoc(Long docId) {
