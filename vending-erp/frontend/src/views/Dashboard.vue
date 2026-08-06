@@ -4,6 +4,7 @@ import { useRouter } from 'vue-router'
 import { reportApi, type GrossMarginResp, type StockResp } from '@/api/report'
 import { importsApi, type ImportBatch } from '@/api/imports'
 import { pageAliasPending } from '@/api/basedata'
+import { taskApi, type TodayViewResp } from '@/api/task'
 import { useAppStore } from '@/stores/app'
 
 /**
@@ -75,6 +76,18 @@ const redCount = computed(
 /** 机器卡:当月机器维毛利行(key=machineId) */
 const machineRows = computed(() => (gmMachine.value?.rows ?? []).filter((r) => r.key != null))
 
+// 今日工作台(M2-6 点亮):任务日历引擎的 3 条摘要,失败不拖累驾驶舱主加载
+const todayTasks = ref<TodayViewResp | null>(null)
+onMounted(async () => {
+  try {
+    todayTasks.value = await taskApi.today()
+  } catch {
+    todayTasks.value = null
+  }
+})
+const taskChip = (s: string, dt?: string | null) =>
+  s === '已完成' ? (dt === '系统校验' ? '✅' : '🟡') : s === '逾期' ? '🔴' : '⬜'
+
 const today = new Date()
 const weekday = ['日', '一', '二', '三', '四', '五', '六'][today.getDay()]
 const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
@@ -97,14 +110,31 @@ const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart
       </span>
     </p>
 
-    <!-- 今日工作台卡位(M2 任务日历引擎) -->
-    <div class="ledger-card work-strip">
+    <!-- 今日工作台(M2-6 点亮:任务日历引擎的今日 3 条摘要,点击跳任务日历) -->
+    <div class="ledger-card work-strip" style="cursor: pointer" @click="router.push('/tasks')">
       <h3 style="color: #fff; margin: 0">📋 今日工作台</h3>
-      <span class="chip" style="background: rgba(255, 255, 255, 0.15); color: #c3d4c8">
-        任务日历(节拍:补货日 / 拿货日 / 盘点日)· <b style="color: #ffd27a">里程碑 2 开放</b>
-      </span>
-      <span class="mini" style="color: #9db8a8; margin-left: auto">
-        任务绑角色、角色绑人;完成有系统校验,不是打勾就算
+      <template v-if="todayTasks">
+        <span
+          v-for="t in todayTasks.instances.slice(0, 3)"
+          :key="t.id"
+          class="chip"
+          style="background: rgba(255, 255, 255, 0.15); color: #e8efe9"
+        >
+          {{ taskChip(t.instanceStatus, t.doneType) }} {{ t.taskName }}
+          <b v-if="t.assigneeUserName" style="color: #ffd27a">· {{ t.assigneeUserName }}</b>
+        </span>
+        <span v-if="!todayTasks.instances.length" class="chip" style="background: rgba(255, 255, 255, 0.15); color: #c3d4c8">
+          今日无到期任务
+        </span>
+        <span v-if="todayTasks.overdue.length" class="chip" style="background: rgba(192, 57, 43, 0.35); color: #ffd0c7">
+          🔴 {{ todayTasks.overdue.length }} 个逾期
+        </span>
+        <span class="mini" style="color: #9db8a8; margin-left: auto">
+          待办 {{ todayTasks.todoCount }} · 已完成 {{ todayTasks.doneCount }} · 任务日历 →
+        </span>
+      </template>
+      <span v-else class="mini" style="color: #9db8a8; margin-left: auto">
+        任务绑角色、角色绑人;完成有系统校验,不是打勾就算 · 任务日历 →
       </span>
     </div>
 

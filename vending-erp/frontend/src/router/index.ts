@@ -13,6 +13,9 @@ const router = createRouter({
     { path: '/inventory', name: 'inventory', meta: { title: '库存' }, component: () => import('@/views/Inventory.vue') },
     { path: '/reports', name: 'reports', meta: { title: '报表' }, component: () => import('@/views/Reports.vue') },
     { path: '/settings', name: 'settings', meta: { title: '设置中心' }, component: () => import('@/views/Settings.vue') },
+    { path: '/tasks', name: 'tasks', meta: { title: '任务日历' }, component: () => import('@/views/TaskCalendar.vue') },
+    { path: '/replenish', name: 'replenish', meta: { title: 'AI 补货' }, component: () => import('@/views/Replenish.vue') },
+    { path: '/staff/:name', name: 'staff-detail', meta: { title: '员工详情' }, component: () => import('@/views/StaffDetail.vue') },
   ],
 })
 

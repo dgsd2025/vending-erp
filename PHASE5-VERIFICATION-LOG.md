@@ -109,3 +109,13 @@ mysql: healthy
   - 真实数据全量导入:5135 行经 API 导入 13.1s,`SUM(amount_received)=25113.50` 与冲刺0基准对平,0 待绑定;重复导入第二次 `rowDup=5135` 零新增
   - 前端 `pnpm build` ✓;浏览器真流程(真文件上传→预览列映射全✓→确认→批次历史/待绑定抽屉)console 0 错
 - 坑:真实数据 913 个订单一单多行会撞 uk(order_no,order_type) → 文件内出现次序加确定性后缀 `#k`;出货明细无商品编号列 → 条码为主/名称兜底;明细实际 3 台设备(数据字典写 2 台是漏数)
+
+## M2-6 · 任务日历(固定任务引擎 + 实例 + 转派 + 员工详情)(2026-08-06)
+
+- 范围:`modules/task/`(定义扩列 V1.0.6 + yc_vend_task_instance 懒生成物化 + 系统校验自动打勾 + 手动补标黄标 + 逾期红灯 + 转派 op_log 留痕 + user_role CRUD + 员工总览)+ `views/TaskCalendar.vue`(/tasks)+ `views/StaffDetail.vue`(/staff/:name)+ Dashboard 今日工作台卡点亮
+- 证据(全文见 `verification/M2-6.md`):
+  - 集成测试 `TaskEngineTest` **9/9 绿**(vend_test_task 独立库);全仓回归两轮 **158/158 → 193/193 绿**(第二轮已含并行票用例)
+  - 8091 curl:种子 3 任务懒生成幂等;vend_dev 当日真有导入批次→导数据任务自动"系统校验✅";转派 陈工→小邱 transferCount=1;手动补标🟡;周视图过去日逾期/未来日仅预告
+  - SQL:yc_vend_task_instance 5 行(3 逾期/1 系统校验/1 手动补标);op_log 转派行 after_json 含 from/to/reason
+  - 前端 pnpm build ✓;浏览器 /tasks、/staff/小邱、驾驶舱卡 console 0 错
+- 坑:uk_user_role 含 user_id(SSO 前按人名 hash 伪 ID)/ 并行票 target/ 争用(8091 用独立 jar)/ 配人前实例需 backfill / weekView 先标逾期再取数 / flyway out-of-order 兼容并行票版本号

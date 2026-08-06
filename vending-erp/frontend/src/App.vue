@@ -13,7 +13,8 @@ const groups: { label?: string; items: { path?: string; ico: string; title: stri
   {
     items: [
       { path: '/dashboard', ico: '🏠', title: '经营驾驶舱' },
-      { ico: '🤖', title: 'AI 补货提示', milestone: 'M2' },
+      { path: '/tasks', ico: '📅', title: '任务日历' },
+      { path: '/replenish', ico: '🤖', title: 'AI 补货提示' },
     ],
   },
   {
@@ -49,7 +50,8 @@ const groups: { label?: string; items: { path?: string; ico: string; title: stri
 const isActive = (path?: string) =>
   !!path && (route.path === path || route.path.startsWith(path + '/')
     || (path === '/products' && route.name === 'product-detail')
-    || (path === '/settings' && route.name === 'machine-detail'))
+    || (path === '/settings' && route.name === 'machine-detail')
+    || (path === '/tasks' && route.name === 'staff-detail'))
 </script>
 
 <template>
