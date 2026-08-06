@@ -1,26 +1,37 @@
 package top.aole.vend.regression;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import top.aole.vend.common.exception.BizException;
 import top.aole.vend.modules.basedata.domain.entity.Product;
+import top.aole.vend.modules.basedata.domain.entity.Supplier;
+import top.aole.vend.modules.basedata.infrastructure.mapper.SupplierMapper;
 import top.aole.vend.modules.doc.domain.entity.DocHead;
 import top.aole.vend.modules.doc.domain.enums.DocStatus;
 import top.aole.vend.modules.doc.domain.enums.DocType;
 import top.aole.vend.modules.doc.mapper.DocHeadMapper;
 import top.aole.vend.modules.doc.service.DocService;
+import top.aole.vend.modules.money.domain.entity.CashFlow;
+import top.aole.vend.modules.money.dto.MoneyDtos;
+import top.aole.vend.modules.money.mapper.CashFlowMapper;
+import top.aole.vend.modules.money.service.AccountService;
 import top.aole.vend.modules.stock.domain.entity.StockLedger;
 import top.aole.vend.modules.stock.mapper.StockLedgerMapper;
 import top.aole.vend.modules.stocktake.domain.entity.Stocktake;
 import top.aole.vend.modules.stocktake.domain.entity.StocktakeItem;
 import top.aole.vend.modules.stocktake.dto.StocktakeDtos;
 import top.aole.vend.modules.stocktake.mapper.StocktakeMapper;
+import top.aole.vend.modules.stocktake.money.domain.entity.CashCheckItem;
+import top.aole.vend.modules.stocktake.money.dto.CashMoneyDtos;
+import top.aole.vend.modules.stocktake.money.service.CashAdjustService;
+import top.aole.vend.modules.stocktake.money.service.CashCheckService;
 import top.aole.vend.modules.stocktake.service.StocktakeService;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -30,8 +41,8 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * M1 已落地:doc_type=资金调整 十枚举在列,状态机通道全通(草稿→待确认→已确认→已完成),
  *   确认不动库存(postingDeferred,钱账 M3);盘盈/盘亏单通道与过账已通(货盘出口)。
- * M3 待接:资金调整确认 → 生成 cash_flow(pl_line=不入利润表-资金调整);
- *   应付核对不符 → 补录或 settle_bill.direction=红字 两个按钮。
+ * M3-5 已接通(两条 Disabled 转绿):资金调整确认 → cash_flow(pl_line=不进利润表)+余额修正;
+ *   应付核对不符 → 补录(跳付款/抵扣录入)或 红冲(跳对应单据)两出口。
  */
 class Scenario03MonthlyStocktakeTest extends RegressionSupport {
 
@@ -43,6 +54,16 @@ class Scenario03MonthlyStocktakeTest extends RegressionSupport {
     private StocktakeService stocktakeService;
     @Autowired
     private StocktakeMapper stocktakeMapper;
+    @Autowired
+    private AccountService accountService;
+    @Autowired
+    private CashAdjustService cashAdjustService;
+    @Autowired
+    private CashCheckService cashCheckService;
+    @Autowired
+    private CashFlowMapper cashFlowMapper;
+    @Autowired
+    private SupplierMapper supplierMapper;
 
     @Test
     @DisplayName("资金调整单(P1-7 钱盘差异唯一出口):建单→提交→确认→完成 状态机全通;确认不写库存流水")
@@ -152,14 +173,88 @@ class Scenario03MonthlyStocktakeTest extends RegressionSupport {
     }
 
     @Test
-    @Disabled("M3-pending:钱账模块未实现——缺\"资金调整单确认→生成 cash_flow(pl_line=不入利润表-资金调整)+账户余额=期初+Σ流水\"的业务断言;doc 通道与 pl_line 字段已在本类前两例验过")
+    @DisplayName("M3-5 转绿:钱盘差异 −13.2 → 资金调整单老板确认 → cash_flow 一条(不进利润表)→ 余额=期初+Σ流水吻合")
     void cashAdjustGeneratesCashFlow() {
-        // M3 实装后:钱盘差异13.2 → 资金调整单确认 → cash_flow 一条,账户余额吻合
+        MoneyDtos.AccountCreateReq accReq = new MoneyDtos.AccountCreateReq();
+        accReq.setAccountName("回归现金账户" + SEQ.incrementAndGet());
+        accReq.setAccountType("现金");
+        accReq.setOpeningBalance(new BigDecimal("200"));
+        Long accId = accountService.create(accReq, OP, OPERATOR);
+
+        CashMoneyDtos.AdjustCreateReq req = new CashMoneyDtos.AdjustCreateReq();
+        req.setAccountId(accId);
+        req.setAdjustAmount(new BigDecimal("-13.20")); // 钱盘发现现金实数比系统少 13.2
+        req.setReason("盘亏");
+        Long docId = cashAdjustService.create(req, OP, OPERATOR);
+        cashAdjustService.confirm(docId, OP, "老板", OPERATOR);
+
+        List<CashFlow> flows = cashFlowMapper.selectList(new LambdaQueryWrapper<CashFlow>()
+                .eq(CashFlow::getRefDocType, CashAdjustService.REF_DOC_TYPE)
+                .eq(CashFlow::getRefDocId, docId));
+        assertEquals(1, flows.size(), "资金调整确认 → cash_flow 恰好一条");
+        assertEquals("资金调整", flows.get(0).getCategory());
+        assertEquals("不进利润表", flows.get(0).getPlLine(), "资金调整只动资产不动损益");
+        assertEquals(0, accountService.balanceOf(accId).compareTo(new BigDecimal("186.80")),
+                "账户余额=期初200−13.2=186.8(余额=期初+Σ流水,无直改路径)");
+        assertEquals(DocStatus.COMPLETED, docHeadMapper.selectById(docId).getDocStatus(),
+                "调整单过账即闭环(P1-7 断点修复)");
     }
 
     @Test
-    @Disabled("M3-pending:应付核对不符的两个出口(补录/生成 settle_bill.direction=红字)依赖结算单服务,M3 实装;direction 字段通道已验")
+    @DisplayName("M3-5 转绿:应付核对不符 → 两出口(补录跳付款/抵扣录入;红冲跳对应单据),留痕后钱盘才许收口")
     void payableMismatchTwoExits() {
-        // M3 实装后:应付核对差异 → 补录入库单 或 应付红字冲下一单
+        Supplier a = new Supplier();
+        a.setSupplierCode("QPRG" + SEQ.incrementAndGet());
+        a.setSupplierName("回归供应商A");
+        a.setOpeningPayable(BigDecimal.ZERO);
+        supplierMapper.insert(a);
+        Supplier b = new Supplier();
+        b.setSupplierCode("QPRG" + SEQ.incrementAndGet());
+        b.setSupplierName("回归供应商B");
+        b.setOpeningPayable(BigDecimal.ZERO);
+        supplierMapper.insert(b);
+        // 结算单链(direction 红字通道本类第三例已验;这里造正常应付,来源单据=红冲跳转目标)
+        jdbc.update("INSERT INTO yc_vend_settle_bill (bill_no, bill_type, direction, supplier_id, " +
+                        "source_doc_id, amount_due, amount_actual, bill_status) VALUES (?,?,?,?,?,?,?,?)",
+                "JS-RG-" + SEQ.incrementAndGet(), "应付", "正常", a.getId(), 777L, "500", "500", "待付款");
+        jdbc.update("INSERT INTO yc_vend_settle_bill (bill_no, bill_type, direction, supplier_id, " +
+                        "source_doc_id, amount_due, amount_actual, bill_status) VALUES (?,?,?,?,?,?,?,?)",
+                "JS-RG-" + SEQ.incrementAndGet(), "应付", "正常", b.getId(), 888L, "200", "200", "待付款");
+
+        Long checkId = cashCheckService.start(OP, OPERATOR);
+        CashMoneyDtos.CheckDetailResp detail = cashCheckService.detail(checkId);
+        CashMoneyDtos.CheckItemRow rowA = detail.getPayableItems().stream()
+                .filter(r -> r.getRefId().equals(a.getId())).findFirst().orElseThrow(AssertionError::new);
+        CashMoneyDtos.CheckItemRow rowB = detail.getPayableItems().stream()
+                .filter(r -> r.getRefId().equals(b.getId())).findFirst().orElseThrow(AssertionError::new);
+        assertEquals(0, rowA.getSystemAmount().compareTo(new BigDecimal("500")), "系统应付=Σ正常实结");
+
+        // 录对方账:A 少 20(漏录付款/抵扣);B 多 30(可能重复结算 → 红冲)
+        CashMoneyDtos.SaveActualsReq save = new CashMoneyDtos.SaveActualsReq();
+        for (Object[] pair : new Object[][]{{rowA.getId(), "480"}, {rowB.getId(), "230"}}) {
+            CashMoneyDtos.ActualRow r = new CashMoneyDtos.ActualRow();
+            r.setItemId((Long) pair[0]);
+            r.setActualAmount(new BigDecimal((String) pair[1]));
+            save.getRows().add(r);
+        }
+        cashCheckService.saveActuals(checkId, save, OP, OPERATOR);
+
+        // 不符行没走出口 → 收口被拦(报错指到两按钮)
+        assertTrue(assertThrows(BizException.class,
+                        () -> cashCheckService.finish(checkId, OP, OPERATOR))
+                .getMessage().contains("红冲"), "收口守卫指向补录/红冲两出口");
+
+        // 出口①补录:跳付款/抵扣录入(采购页),只跳转不重造
+        CashMoneyDtos.PayableExitResp backfill = cashCheckService.markPayableExit(
+                checkId, rowA.getId(), CashCheckItem.EXIT_BACKFILL, OP, OPERATOR);
+        assertEquals("/purchase", backfill.getRoute());
+        // 出口②红冲:跳对应单据(前端打开单据抽屉走既有红冲入口 → 连锁生成应付红字)
+        CashMoneyDtos.PayableExitResp redFlush = cashCheckService.markPayableExit(
+                checkId, rowB.getId(), CashCheckItem.EXIT_RED_FLUSH, OP, OPERATOR);
+        assertEquals(888L, redFlush.getSourceDocId(), "红冲出口带上对应来源单据");
+
+        cashCheckService.finish(checkId, OP, OPERATOR);
+        assertEquals("已完成", cashCheckService.detail(checkId).getCheckStatus(),
+                "两出口留痕后钱盘核对归档(P1-7 应付侧闭环)");
     }
 }

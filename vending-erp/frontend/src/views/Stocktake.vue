@@ -3,6 +3,9 @@ import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import DocDetailDrawer from '@/components/doc/DocDetailDrawer.vue'
+import CashCheckPanel from '@/components/money/CashCheckPanel.vue'
+import ClaimPanel from '@/components/money/ClaimPanel.vue'
+import { CLAIMABLE_REASONS } from '@/api/claim'
 import { pageMachines, pageProducts, type Machine } from '@/api/basedata'
 import {
   ACCOUNT_ERROR_REASONS, DIFF_REASONS,
@@ -411,6 +414,20 @@ async function doConfirm() {
   }
 }
 
+// ============================== 五步第 4 步:索赔入口(M3-4 点亮) ==============================
+
+/** 可索赔盘亏行:归因=吞货掉货/被盗 且确实盘亏(diff<0)(§9.3 场景4) */
+const claimableRows = computed(() =>
+  (detail.value?.items || []).filter(
+    (r) => Number(r.diffQty) < 0 && (CLAIMABLE_REASONS as readonly string[]).includes(r.diffReason || ''),
+  ))
+/** 索赔金额默认=盘亏成本额(Σ|diffAmount|;无成本史行按 0 计,弹窗内可改) */
+const claimPrefillAmount = computed(() =>
+  Number(claimableRows.value
+    .reduce((s, r) => s + Math.abs(Number(r.diffAmount ?? 0)), 0)
+    .toFixed(2)))
+const claimDialogVisible = ref(false)
+
 // ============================== 单据抽屉(七律#3:单号可点) ==============================
 
 const docDrawerVisible = ref(false)
@@ -421,12 +438,12 @@ function openDoc(docId?: number | null) {
   docDrawerVisible.value = true
 }
 
-// ============================== 月度财务盘点 SOP(mockup p9,静态 SOP 说明;M3/M4 环节灰位) ==============================
+// ============================== 月度财务盘点 SOP(mockup p9;D2 钱盘 M3-5 点亮,C/A 灰位) ==============================
 
 const sopRows = [
   { step: 'P 准备', when: '前一天', who: '系统', what: '自动生成任务包:仓库盘点 ×1 + 资金核对 + 应付核对', support: '账面数自动快照(任务日历派单)', milestone: '' },
   { step: 'D1 货盘', when: '上午', who: '补货员', what: '仓库大盘(机器不重复盘——已由每周轮盘覆盖,只汇总本月轮盘结果)', support: '手机录入,只填差异行', milestone: '' },
-  { step: 'D2 钱盘', when: '上午', who: '老板', what: '核微信/现金实际余额 · 核平台上月到账 · 发对账单给供应商确认', support: '三个核对页,填实际数', milestone: '里程碑 3' },
+  { step: 'D2 钱盘', when: '上午', who: '老板', what: '核微信/现金实际余额 · 核平台上月到账 · 发对账单给供应商确认', support: '↓ 下方钱盘三核对面板,填实际数', milestone: '' },
   { step: 'C 检查', when: '下午', who: '系统+老板', what: '自动出《月度盘点报告》:货差/钱差/资产快照/环比', support: '差异超阈值红灯 · 报告归档', milestone: '里程碑 3' },
   { step: 'A 改进', when: '下午', who: '老板', what: '对着报告定改进任务(淘汰/调参/索赔),AI 起草建议', support: '任务带验证指标,下月自动回查', milestone: '里程碑 4' },
 ]
@@ -757,17 +774,25 @@ onUnmounted(() => {
               </template>
             </div>
           </div>
-          <!-- 第4步 · 改进(灰位) -->
-          <div class="wz-step wz-dim">
-            <div class="wz-no">第 4 步 · 改进</div>
-            <div class="wz-title">登记改进任务</div>
-            <div class="wz-body mini">吞货多→报修货道 · 过期多→降机内上限 · AI 起草一键采纳<br /><span class="chip c-gray">里程碑 4 开放</span></div>
+          <!-- 第4步 · 改进 + 索赔入口(索赔 M3-4 点亮;改进任务仍里程碑 4) -->
+          <div class="wz-step" :class="claimableRows.length ? 'wz-active' : 'wz-dim'">
+            <div class="wz-no">第 4 步 · 改进/索赔{{ claimableRows.length ? ' ← 可索赔' : '' }}</div>
+            <div class="wz-title">吞货/被盗 → 找厂家或平台要钱</div>
+            <div class="wz-body mini">
+              <template v-if="claimableRows.length">
+                <div>{{ claimableRows.length }} 行归因可索赔(吞货掉货/被盗),盘亏成本额 ¥{{ claimPrefillAmount.toFixed(2) }}</div>
+                <el-button type="warning" size="small" style="margin-top: 4px" @click="claimDialogVisible = true">
+                  🧾 发起索赔(挂索赔应收)
+                </el-button>
+              </template>
+              <template v-else>吞货/被盗归因行才可索赔;改进任务:吞货多→报修货道 · 过期多→降机内上限<br /><span class="chip c-gray">改进任务 里程碑 4 开放</span></template>
+            </div>
           </div>
           <!-- 第5步 · 下轮验证(灰位) -->
           <div class="wz-step wz-dim">
             <div class="wz-no">第 5 步 · 下轮验证</div>
             <div class="wz-title">下次盘点自动回查</div>
-            <div class="wz-body mini">该原因损耗环比↓?达标关闭·不达标升级<br /><span class="chip c-gray">里程碑 4 开放</span>·索赔挂应收:<span class="chip c-gray">里程碑 3</span></div>
+            <div class="wz-body mini">该原因损耗环比↓?达标关闭·不达标升级<br /><span class="chip c-gray">里程碑 4 开放</span>·索赔挂应收:<span class="chip c-green">已开放(第 4 步)</span></div>
           </div>
         </div>
       </div>
@@ -870,13 +895,33 @@ onUnmounted(() => {
         </el-table-column>
       </el-table>
       <p class="mini" style="margin-top: 8px">
-        💡 机器不重复盘——已由每周轮盘覆盖,月盘只做<b>仓库大盘</b> + 汇总本月轮盘结果;钱盘(资金/应付核对)与《月度盘点报告》随钱账、PDCA 里程碑逐月点亮。
+        💡 机器不重复盘——已由每周轮盘覆盖,月盘只做<b>仓库大盘</b> + 汇总本月轮盘结果;D2 钱盘已点亮(下方三核对面板),《月度盘点报告》与 PDCA 随里程碑逐月点亮。
       </p>
+    </div>
+
+    <!-- 💰 D2 钱盘三核对(M3-5 点亮:账户/平台到账/应付;差异出口=资金调整单/补录/红冲) -->
+    <div class="ledger-card" data-block="cash-check">
+      <h3>💰 钱盘三核对(月度 SOP · D2)
+        <span class="hint">每分钱的差异都要有出口:账户差→资金调整单 · 应付差→补录或红冲</span>
+      </h3>
+      <CashCheckPanel />
     </div>
 
     <p class="ledger-foot-note">— 老台账的《月末盘点表》从"建好了没填过"变成固定节奏:补货顺手盘 + 每月 1 日半天大盘 —</p>
 
     <DocDetailDrawer v-model="docDrawerVisible" :doc-id="docDrawerId" />
+
+    <!-- 五步第 4 步:索赔面板(M3-4;盘亏行预填,金额=盘亏成本额) -->
+    <el-dialog v-model="claimDialogVisible" title="🧾 索赔(盘亏 → 找厂家/平台要钱)" width="860px" append-to-body>
+      <ClaimPanel
+        v-if="claimDialogVisible && detail"
+        :prefill-source-id="detail.id"
+        :prefill-item-ids="claimableRows.map((r) => r.id)"
+        :prefill-amount="claimPrefillAmount"
+        :auto-open-create="true"
+        @created="openDetail(detail.id)"
+      />
+    </el-dialog>
   </div>
 </template>
 

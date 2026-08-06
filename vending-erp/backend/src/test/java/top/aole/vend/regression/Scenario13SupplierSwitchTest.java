@@ -1,10 +1,25 @@
 package top.aole.vend.regression;
 
-import org.junit.jupiter.api.Disabled;
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.dao.DataAccessException;
+import top.aole.vend.common.exception.BizException;
+import top.aole.vend.modules.basedata.domain.entity.Product;
+import top.aole.vend.modules.basedata.domain.entity.Supplier;
+import top.aole.vend.modules.basedata.infrastructure.mapper.SupplierMapper;
+import top.aole.vend.modules.doc.domain.enums.DocType;
+import top.aole.vend.modules.doc.service.DocService;
+import top.aole.vend.modules.settle.domain.entity.SettleBill;
+import top.aole.vend.modules.settle.dto.SettleDtos;
+import top.aole.vend.modules.settle.mapper.DeductionMapper;
+import top.aole.vend.modules.settle.mapper.SettleBillMapper;
+import top.aole.vend.modules.settle.service.DeductionService;
+import top.aole.vend.modules.settle.service.SettleBillService;
 
+import java.math.BigDecimal;
+import java.time.LocalDate;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.*;
@@ -14,9 +29,22 @@ import static org.junit.jupiter.api.Assertions.*;
  * P2-11 修复:deduction.supplier_id NOT NULL 必填 + 结算单只允许带入同供应商待抵扣)。
  *
  * M1 已落地:supplier_id 非空约束(数据库层硬拦)+ 供应商维度索引 + 结算单只读校验字段通道。
- * M3 待接:结算单带入待抵扣时的同供应商业务校验(settle_bill.deduction_amount)。
+ * M3-2 已接:结算单带入待抵扣时的同供应商业务校验(SettleBillService.confirm),末例转绿。
  */
 class Scenario13SupplierSwitchTest extends RegressionSupport {
+
+    private static final String OPERATOR = "回归测试员";
+
+    @Autowired
+    private SupplierMapper supplierMapper;
+    @Autowired
+    private DeductionMapper deductionMapper;
+    @Autowired
+    private SettleBillMapper billMapper;
+    @Autowired
+    private DeductionService deductionService;
+    @Autowired
+    private SettleBillService settleBillService;
 
     @Test
     @DisplayName("防串户约束(P2-11):deduction.supplier_id NOT NULL,注释写死\"只允许同供应商待抵扣\"")
@@ -64,8 +92,57 @@ class Scenario13SupplierSwitchTest extends RegressionSupport {
     }
 
     @Test
-    @Disabled("M3-pending:结算单服务未实现——缺\"settle_bill 只允许带入同供应商待抵扣(deduction_amount 校验)\"业务断言;数据库层防串户约束已在本类前两例验过")
+    @DisplayName("业务层防串户(M3-2 转绿):新供应商结算单尝试带入老供应商待抵扣 → 拒绝并留在待抵扣;同供应商放行")
     void settleBillOnlyPullsSameSupplierDeduction() {
-        // M3 实装后:新供应商结算单尝试带入老供应商待抵扣 → 拒绝
+        // 老供应商蔡彩云(601 概念)与新供应商陈老板:各建档
+        Supplier oldS = supplier("蔡彩云-切换期");
+        Supplier newS = supplier("陈老板-切换期");
+        // 老供应商最后一期兑换抵扣 351.63
+        SettleDtos.DeductionCreateReq dedReq = new SettleDtos.DeductionCreateReq();
+        dedReq.setSupplierId(oldS.getId());
+        dedReq.setDedSource("兑换");
+        dedReq.setAmount(new BigDecimal("351.63"));
+        dedReq.setPeriodDesc("老供应商最后一期兑换");
+        Long oldDed = deductionService.create(dedReq, OP, OPERATOR);
+
+        // 新供应商采购 → 自动生成结算单
+        Product p = product("切换期的东鹏", null, null);
+        top.aole.vend.modules.doc.dto.DocCreateReq req = req(DocType.PURCHASE_IN, null,
+                DocService.SOURCE_MANUAL, LocalDate.now(), new Object[]{p.getId(), "200", "3.5"});
+        req.setSupplierId(newS.getId());
+        Long docId = docService.createDoc(req, OP);
+        docService.submit(docId, OP);
+        docService.confirm(docId, OP, false, null);
+        SettleBill bill = billMapper.selectOne(new LambdaQueryWrapper<SettleBill>()
+                .eq(SettleBill::getSourceDocId, docId).eq(SettleBill::getDirection, "正常"));
+        assertNotNull(bill);
+
+        // 串户带入 → 业务层拒绝(数据库层 NOT NULL 已在前两例验过,这里是 deduction_amount 校验层)
+        BizException e = assertThrows(BizException.class, () -> settleBillService.confirm(
+                bill.getId(), java.util.Collections.singletonList(oldDed), OP, OPERATOR, "老板"));
+        assertTrue(e.getMessage().contains("同供应商"), "报错口径指向 P2-11:" + e.getMessage());
+        assertEquals("待抵扣", deductionMapper.selectById(oldDed).getDedStatus(), "被拒后原样,不串户");
+
+        // 同供应商待抵扣正常带入
+        SettleDtos.DeductionCreateReq sameReq = new SettleDtos.DeductionCreateReq();
+        sameReq.setSupplierId(newS.getId());
+        sameReq.setDedSource("厂家补贴");
+        sameReq.setAmount(new BigDecimal("88.00"));
+        Long sameDed = deductionService.create(sameReq, OP, OPERATOR);
+        settleBillService.confirm(bill.getId(), java.util.Collections.singletonList(sameDed), OP, OPERATOR, "老板");
+        assertEquals("已抵扣", deductionMapper.selectById(sameDed).getDedStatus());
+        assertEquals(bill.getId(), deductionMapper.selectById(sameDed).getUsedSettleBillId(), "各归各户");
+    }
+
+    private Supplier supplier(String name) {
+        Supplier s = new Supplier();
+        s.setSupplierCode("RGS13" + SEQ.incrementAndGet());
+        s.setSupplierName(name);
+        s.setSettleMethod("现结");
+        s.setAccountDays(0);
+        s.setOpeningPayable(BigDecimal.ZERO);
+        s.setCoopStatus("合作中");
+        supplierMapper.insert(s);
+        return s;
     }
 }

@@ -1,7 +1,6 @@
 package top.aole.vend.regression;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -22,6 +21,14 @@ import top.aole.vend.modules.purchase.dto.PoCreateReq;
 import top.aole.vend.modules.purchase.mapper.PurchaseOrderItemMapper;
 import top.aole.vend.modules.purchase.service.PurchaseOrderService;
 import top.aole.vend.modules.purchase.service.PurchaseReceiptService;
+import top.aole.vend.modules.basedata.infrastructure.mapper.SupplierMapper;
+import top.aole.vend.modules.money.mapper.AccountMapper;
+import top.aole.vend.modules.money.service.AttachmentService;
+import top.aole.vend.modules.settle.domain.entity.SettleBill;
+import top.aole.vend.modules.settle.mapper.PaymentMapper;
+import top.aole.vend.modules.settle.mapper.SettleBillMapper;
+import top.aole.vend.modules.settle.service.PaymentService;
+import top.aole.vend.modules.settle.service.SettleBillService;
 import top.aole.vend.modules.stock.domain.entity.StockLedger;
 import top.aole.vend.modules.stock.mapper.StockLedgerMapper;
 
@@ -56,6 +63,20 @@ class Scenario10RedFlushChainTest extends RegressionSupport {
     private PurchaseReceiptService receiptService;
     @Autowired
     private PurchaseOrderItemMapper poItemMapper;
+    @Autowired
+    private SupplierMapper supplierMapper;
+    @Autowired
+    private AccountMapper accountMapper;
+    @Autowired
+    private SettleBillMapper billMapper;
+    @Autowired
+    private PaymentMapper paymentMapper;
+    @Autowired
+    private SettleBillService settleBillService;
+    @Autowired
+    private PaymentService paymentService;
+    @Autowired
+    private AttachmentService attachmentService;
 
     @Test
     @DisplayName("数量错→整单红冲:反向单免拦截过账,原单→已红冲,库存归零;红冲单/调整单不许再红冲")
@@ -192,8 +213,8 @@ class Scenario10RedFlushChainTest extends RegressionSupport {
     }
 
     @Test
-    @DisplayName("已付款连锁通道不堵死:采购单进待结算后红冲被拦并提示 M3 应付红字;状态机通道平行")
-    void paidChainBlockedWithM3Hint() {
+    @DisplayName("应付链通道已开通(M3-2):采购单进待结算后红冲不再被拦,连锁执行且原单→已红冲")
+    void paidChainOpenedByM32() {
         Product p = product("已进结算链的货", null, null);
         Long originId = stockWarehouse(p.getId(), "10");
         // 采购单进入应付结算链(M3 状态通道:已确认→待结算)
@@ -202,9 +223,11 @@ class Scenario10RedFlushChainTest extends RegressionSupport {
         docHeadMapper.updateById(head);
 
         RedFlushService.Preview preview = redFlushService.preview(originId);
-        assertFalse(preview.isExecutable());
-        assertTrue(preview.getBlockers().stream().anyMatch(b -> b.contains("应付红字")),
-                "拦截原因指向 M3 应付红字通道(连锁不空白,只是延后)");
+        assertTrue(preview.isExecutable(), "M1 时代的'M3 开通'拦截已被红冲+应付连锁事务取代");
+
+        redFlushService.execute(originId, OP, "待结算单据整单红冲", false);
+        assertEquals(DocStatus.RED_FLUSHED, docHeadMapper.selectById(originId).getDocStatus(),
+                "待结算→已红冲(状态机 M3-2 新通道);无结算单(无供应商垫底单)则无应付连锁");
     }
 
     @Test
@@ -234,8 +257,71 @@ class Scenario10RedFlushChainTest extends RegressionSupport {
     }
 
     @Test
-    @Disabled("M3-pending:已付款单红冲连带生成 settle_bill(direction=红字)冲下一单的连锁事务未实装——M1 已验通道不堵死(preview 拦截并提示),红字字段/方向枚举在 Scenario03 验过")
+    @DisplayName("已付款红冲连锁(M3-2 转绿):红冲→生成 settle_bill(direction=红字)待冲抵;下一单老板确认自动抵减;不动已完成付款")
     void paidRedFlushGeneratesRedSettleBill() {
-        // M3 实装后:已付款采购单红冲 → 自动生成应付红字 → 下一单抵减
+        // 造全链:供应商→采购确认(自动生成结算单)→老板复核→付款(传凭证)→核销闭环
+        top.aole.vend.modules.basedata.domain.entity.Supplier s = new top.aole.vend.modules.basedata.domain.entity.Supplier();
+        s.setSupplierCode("RGS" + SEQ.incrementAndGet());
+        s.setSupplierName("红字连锁供应商");
+        s.setSettleMethod("现结");
+        s.setAccountDays(0);
+        s.setOpeningPayable(java.math.BigDecimal.ZERO);
+        s.setCoopStatus("合作中");
+        supplierMapper.insert(s);
+        top.aole.vend.modules.money.domain.entity.Account a = new top.aole.vend.modules.money.domain.entity.Account();
+        a.setAccountName("RG微信" + SEQ.incrementAndGet());
+        a.setAccountType("微信");
+        a.setIsVirtual(false);
+        a.setOpeningBalance(new BigDecimal("1000"));
+        accountMapper.insert(a);
+
+        Product p = product("已付款要红冲的货", null, null);
+        top.aole.vend.modules.doc.dto.DocCreateReq req = req(DocType.PURCHASE_IN, null,
+                DocService.SOURCE_MANUAL, LocalDate.now(), new Object[]{p.getId(), "10", "3.5"}); // 35
+        req.setSupplierId(s.getId());
+        Long originId = docService.createDoc(req, OP);
+        docService.submit(originId, OP);
+        docService.confirm(originId, OP, false, null);
+
+        SettleBill bill = billMapper.selectOne(new LambdaQueryWrapper<SettleBill>()
+                .eq(SettleBill::getSourceDocId, originId).eq(SettleBill::getDirection, "正常"));
+        assertNotNull(bill, "采购确认自动生成结算单");
+        settleBillService.confirm(bill.getId(), null, OP, "回归测试员", "老板");
+
+        top.aole.vend.modules.settle.dto.SettleDtos.PaymentCreateReq payReq =
+                new top.aole.vend.modules.settle.dto.SettleDtos.PaymentCreateReq();
+        payReq.setSupplierId(s.getId());
+        payReq.setAccountId(a.getId());
+        payReq.setAmount(new BigDecimal("35"));
+        payReq.setSettleBillId(bill.getId());
+        Long payId = paymentService.create(payReq, OP, "回归测试员");
+        attachmentService.upload("payment", payId, "转账截图", "转账.png",
+                "png".getBytes(java.nio.charset.StandardCharsets.UTF_8), OP, "回归测试员");
+        paymentService.confirm(payId, OP, "回归测试员");
+        assertEquals(DocStatus.SETTLED, docHeadMapper.selectById(originId).getDocStatus(), "全链闭环:已结算");
+
+        // 红冲已付款采购单 → 应付红字连锁(§13.2-1)
+        redFlushService.execute(originId, OP, "已付款后发现整单错", false);
+        assertEquals("结算完成", paymentMapper.selectById(payId).getPayStatus(), "不动已完成付款");
+        SettleBill red = billMapper.selectOne(new LambdaQueryWrapper<SettleBill>()
+                .eq(SettleBill::getSupplierId, s.getId()).eq(SettleBill::getDirection, "红字"));
+        assertNotNull(red, "生成应付红字");
+        assertEquals("待冲抵", red.getBillStatus());
+        assertEquals(0, red.getAmountDue().compareTo(new BigDecimal("35")), "红字金额=已付款额");
+
+        // 下一单 70:老板确认自动抵减红字 → 实结 35
+        top.aole.vend.modules.doc.dto.DocCreateReq req2 = req(DocType.PURCHASE_IN, null,
+                DocService.SOURCE_MANUAL, LocalDate.now(), new Object[]{p.getId(), "20", "3.5"});
+        req2.setSupplierId(s.getId());
+        Long doc2 = docService.createDoc(req2, OP);
+        docService.submit(doc2, OP);
+        docService.confirm(doc2, OP, false, null);
+        SettleBill bill2 = billMapper.selectOne(new LambdaQueryWrapper<SettleBill>()
+                .eq(SettleBill::getSourceDocId, doc2).eq(SettleBill::getDirection, "正常"));
+        top.aole.vend.modules.settle.service.SettleBillService.ConfirmResult result =
+                settleBillService.confirm(bill2.getId(), null, OP, "回归测试员", "老板");
+        assertEquals(0, result.getRedOffsetAmount().compareTo(new BigDecimal("35")), "红字冲抵下一单");
+        assertEquals(0, result.getAmountActual().compareTo(new BigDecimal("35")), "70−35");
+        assertEquals("已冲抵", billMapper.selectById(red.getId()).getBillStatus());
     }
 }

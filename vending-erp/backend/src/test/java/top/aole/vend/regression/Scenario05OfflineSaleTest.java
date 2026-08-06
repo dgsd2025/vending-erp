@@ -1,6 +1,5 @@
 package top.aole.vend.regression;
 
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -8,6 +7,13 @@ import top.aole.vend.modules.basedata.domain.entity.Machine;
 import top.aole.vend.modules.basedata.domain.entity.Product;
 import top.aole.vend.modules.doc.domain.enums.DocType;
 import top.aole.vend.modules.doc.service.DocService;
+import top.aole.vend.modules.expense.dto.ExpenseDtos;
+import top.aole.vend.modules.expense.service.OfflineSaleService;
+import top.aole.vend.modules.money.domain.entity.CashFlow;
+import top.aole.vend.modules.money.domain.enums.PlLine;
+import top.aole.vend.modules.money.dto.MoneyDtos;
+import top.aole.vend.modules.money.mapper.CashFlowMapper;
+import top.aole.vend.modules.money.service.AccountService;
 import top.aole.vend.modules.report.service.CostEngine;
 import top.aole.vend.modules.stock.domain.entity.SaleRecord;
 
@@ -23,12 +29,18 @@ import static org.junit.jupiter.api.Assertions.*;
  *
  * M1 已落地:order_type=线下补录 口径守卫(不入销售额/不扣机器账)+ offline_flag /
  *   stocktake_item.offline_exempt 字段通道 + OFFLINE- 前缀单号约定。
- * M3 待接:复合单一次录入(同时生成 cash_flow 其他收入-平台外)。
+ * M3-4 已接:复合单一次录入(OfflineSaleService:同事务生成 cash_flow 其他收入-平台外)。
  */
 class Scenario05OfflineSaleTest extends RegressionSupport {
 
     @Autowired
     private CostEngine costEngine;
+    @Autowired
+    private OfflineSaleService offlineSaleService;
+    @Autowired
+    private AccountService accountService;
+    @Autowired
+    private CashFlowMapper cashFlowMapper;
 
     private static final LocalDate DAY = LocalDate.of(2026, 6, 10);
 
@@ -87,8 +99,48 @@ class Scenario05OfflineSaleTest extends RegressionSupport {
     }
 
     @Test
-    @Disabled("M3-pending:线下销售复合单一次录入(sale_record+cash_flow 其他收入-平台外+豁免标记联动)依赖钱账模块;字段通道与两条口径守卫已在本类前三例验过")
+    @DisplayName("线下销售复合单(M3-4 实装):一次录入 → 三件套同事务落地(13.2 进平台外收入,豁免标记标 4 瓶)")
     void offlineCompositeEntryGeneratesCashFlow() {
-        // M3 实装后:一次录入 → 三件套同事务落地(13.2 进平台外收入,盘点差异豁免4瓶)
+        Machine m = machine("故障机3号");
+        Product p = product("线下复合单可乐", null, null);
+        confirmedDoc(DocType.PURCHASE_IN, null, DocService.SOURCE_MANUAL,
+                DAY.minusDays(1), false, DAY.minusDays(1).atTime(8, 0), new Object[]{p.getId(), "10", "2.0"});
+        confirmedDoc(DocType.TRANSFER_OUT, m.getId(), DocService.SOURCE_IMPORT,
+                DAY, false, DAY.atTime(9, 0), new Object[]{p.getId(), "8", "2.0"});
+        sale(m.getId(), p.getId(), "1", "5.0", "正常", DAY.atTime(10, 0));
+
+        MoneyDtos.AccountCreateReq accReq = new MoneyDtos.AccountCreateReq();
+        accReq.setAccountName("老板微信-S05-" + SEQ.incrementAndGet());
+        accReq.setAccountType("微信");
+        Long accountId = accountService.create(accReq, 9L, OPERATOR);
+
+        // 机器故障,微信直接转 13.2 线下卖 4 瓶(穿行原文数字)→ 一次录入
+        ExpenseDtos.OfflineSaleReq req = new ExpenseDtos.OfflineSaleReq();
+        req.setMachineId(m.getId());
+        req.setProductId(p.getId());
+        req.setQty(new BigDecimal("4"));
+        req.setAmount(new BigDecimal("13.2"));
+        req.setAccountId(accountId);
+        req.setBizTime(DAY.atTime(11, 0));
+        ExpenseDtos.OfflineSaleResp resp = offlineSaleService.create(req, 9L, OPERATOR);
+
+        // ① sale_record:线下补录 + OFFLINE- 前缀 + 豁免标记,不入待结算
+        SaleRecord saleRecord = saleRecordMapper.selectById(resp.getSaleRecordId());
+        assertEquals("线下补录", saleRecord.getOrderType());
+        assertTrue(saleRecord.getOrderNo().startsWith("OFFLINE-"), saleRecord.getOrderNo());
+        assertTrue(Boolean.TRUE.equals(saleRecord.getOfflineFlag()), "豁免标记(P2-13):盘点差异豁免 4 瓶的数据源");
+        assertNull(saleRecord.getSettlementId(), "线下补录不入待结算");
+        // ② cash_flow:其他收入-平台外 13.2
+        CashFlow flow = cashFlowMapper.selectById(resp.getCashFlowId());
+        assertEquals("线下收入", flow.getCategory());
+        assertEquals(PlLine.OTHER_INCOME_OFFLINE.getLabel(), flow.getPlLine());
+        assertEquals(0, flow.getAmount().compareTo(new BigDecimal("13.2")));
+        assertEquals(0, accountService.balanceOf(accountId).compareTo(new BigDecimal("13.2")));
+        // ③ 口径守卫依旧:销售额只剩正常 5,机器账 8−1=7(线下 4 瓶不扣)
+        CostEngine.MonthAgg agg = costEngine.replay().getSkuMonth()
+                .get(CostEngine.Replay.key(p.getId(), "2026-06"));
+        assertEquals(0, agg.getSalesAmt().compareTo(new BigDecimal("5")));
+        assertEquals(0, stockService.getMachineStock(m.getId(), p.getId())
+                .compareTo(new BigDecimal("7")));
     }
 }
