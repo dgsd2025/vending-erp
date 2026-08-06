@@ -36,4 +36,13 @@ public class ReplenishConfig extends BaseEntity {
 
     /** 临期预警天数 */
     private Integer expireWarnDays;
+
+    /** 慢销品最低水位(箱):仓库+机内+在途低于此值触发补货(日均<1.5 不套公式) */
+    private BigDecimal slowMinBoxes;
+
+    /** 慢销品补到水位(箱) */
+    private BigDecimal slowMaxBoxes;
+
+    /** AI 解释模型名(可配不写死;mock 阶段仅展示,空=跟随 llm.model 配置) */
+    private String llmModel;
 }

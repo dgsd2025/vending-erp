@@ -101,6 +101,9 @@ export interface ReplenishConfig {
   serviceLevel?: number | string | null
   leadTimeDays?: number | string | null
   expireWarnDays?: number | null
+  slowMinBoxes?: number | string | null
+  slowMaxBoxes?: number | string | null
+  llmModel?: string | null
 }
 
 export interface OpLog {
