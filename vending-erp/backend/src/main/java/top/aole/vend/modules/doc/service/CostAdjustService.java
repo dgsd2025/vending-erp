@@ -3,6 +3,7 @@ package top.aole.vend.modules.doc.service;
 import cn.hutool.json.JSONUtil;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import top.aole.vend.common.exception.BizException;
@@ -15,10 +16,13 @@ import top.aole.vend.modules.doc.dto.CostAdjustReq;
 import top.aole.vend.modules.doc.mapper.DocHeadMapper;
 import top.aole.vend.modules.doc.mapper.DocItemMapper;
 import top.aole.vend.modules.doc.mapper.DocQueryMapper;
+import top.aole.vend.modules.money.domain.enums.CashFlowCategory;
+import top.aole.vend.modules.money.domain.event.MoneyPostingEvent;
 import top.aole.vend.modules.period.service.PeriodLockService;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -48,6 +52,8 @@ public class CostAdjustService {
     private final DocQueryMapper docQueryMapper;
     private final OpLogService opLogService;
     private final PeriodLockService periodLockService;
+    /** M3-9 P1-4:已售部分Δ 非现金过账事件出口(cash_flow 唯一写手的合法触发源) */
+    private final ApplicationEventPublisher eventPublisher;
 
     // ============================== 预览 ==============================
 
@@ -179,6 +185,22 @@ public class CostAdjustService {
 
         docService.submit(head.getId(), userId);
         docService.confirm(head.getId(), userId, false, null); // 过账:listener 成本调整分支写 qty=0/amount=Δ 流水
+
+        // M3-9 P1-4:已售部分Δ 过非现金流水(account_id=NULL,只进 pl_line=成本调整 利润表行,
+        // 不动任何账户余额)——M1-7 说好"已售部分 M3 实装"的接线在此:
+        // Δ>0(实际单价更高)= 已售成本被少记 → 利润应降 → 支;Δ<0 → 收。
+        BigDecimal soldDelta = p.getSoldAdjustTotal();
+        if (soldDelta.compareTo(BigDecimal.ZERO) != 0) {
+            MoneyPostingEvent event = new MoneyPostingEvent("成本调整单", head.getId(), userId);
+            String note = String.format("成本调整[%s]已售部分Δ%+.2f(原单[%s];非现金,仅进利润表成本调整行)",
+                    head.getDocNo(), soldDelta, origin.getDocNo());
+            if (soldDelta.compareTo(BigDecimal.ZERO) > 0) {
+                event.pnlOutflow(soldDelta, CashFlowCategory.COST_ADJUST_FLOW, LocalDateTime.now(), note);
+            } else {
+                event.pnlInflow(soldDelta.negate(), CashFlowCategory.COST_ADJUST_FLOW, LocalDateTime.now(), note);
+            }
+            eventPublisher.publishEvent(event);
+        }
         return head.getId();
     }
 

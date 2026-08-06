@@ -51,6 +51,19 @@ class TaskEngineTest extends BaseIntegrationTest {
 
     private final LocalDate today = LocalDate.now();
 
+    /**
+     * M3-9 稳定性修复:种子 replenish_patrol 的 anchor_date=迁移当日(CURRENT_DATE),
+     * "每3天"仅在 (today−迁移日)%3==0 的日子到期——本类多条用例断言"今天到期",
+     * 原样跑三天里挂两天。测试内把锚点校准到今天(事务回滚,不污染库)。
+     */
+    @org.junit.jupiter.api.BeforeEach
+    void reAnchorPatrolToToday() {
+        routineTaskMapper.update(null,
+                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<RoutineTask>()
+                        .eq(RoutineTask::getTaskKey, "replenish_patrol")
+                        .set(RoutineTask::getAnchorDate, today));
+    }
+
     private RoutineTask defByKey(String key) {
         return routineTaskMapper.selectOne(new LambdaQueryWrapper<RoutineTask>()
                 .eq(RoutineTask::getTaskKey, key));

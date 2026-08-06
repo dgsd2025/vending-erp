@@ -536,4 +536,58 @@ class SettleFlowTest extends BaseIntegrationTest {
             assertTrue(wb.getSheetAt(0).getRow(0).getCell(0).getStringCellValue().contains("对账单供应商"));
         }
     }
+
+    @Test
+    @DisplayName("13·P0-1:付款确认时重查结算单——建付款单后采购被红冲(结算单作废)→ 确认被拒,0 流水,已作废单不复活")
+    void confirmRejectsWhenBillNoLongerPayable() {
+        Supplier s = supplier("复核供应商", "现结", 0, "0");
+        Product p = product("复核商品");
+        Account a = account("复核", "5000");
+        Long docId = purchase(s.getId(), p.getId(), "100", "3.5", LocalDate.now()); // 350
+        SettleBill bill = billOf(docId);
+        settleBillService.confirm(bill.getId(), null, OP, OPERATOR, ROLE_BOSS); // 待付款
+        Long payId = payment(s.getId(), a.getId(), "350", bill.getId());
+        voucher(payId);
+
+        // 建付款单之后,采购被红冲 → 结算单连锁作废
+        redFlushService.execute(docId, OP, "付款前发现整单错", false);
+        assertEquals(SettleBill.ST_VOID, billMapper.selectById(bill.getId()).getBillStatus());
+
+        BizException e = assertThrows(BizException.class, () -> paymentService.confirm(payId, OP, OPERATOR));
+        assertTrue(e.getMessage().contains("不能再付款"), "拒付并讲清原因:" + e.getMessage());
+        assertEquals(Payment.ST_PENDING, paymentMapper.selectById(payId).getPayStatus(), "付款单原样待付款");
+        assertEquals(0, cashFlowMapper.selectCount(new LambdaQueryWrapper<CashFlow>()
+                .eq(CashFlow::getRefDocType, "付款单").eq(CashFlow::getRefDocId, payId)), "一分钱流水都不落");
+        assertEquals(SettleBill.ST_VOID, billMapper.selectById(bill.getId()).getBillStatus(), "已作废单不被复活");
+        assertEquals(0, accountService.balanceOf(a.getId()).compareTo(new BigDecimal("5000")), "余额不动");
+    }
+
+    @Test
+    @DisplayName("14·P1-6:红冲部分付款采购→原结算单关闭(已作废,剩余额不再挂待付款),已付额由红字承接;新付款不能再关联")
+    void redFlushPartialPaidClosesOriginalBill() {
+        Supplier s = supplier("部分付款供应商", "现结", 0, "0");
+        Product p = product("部分付款商品");
+        Account a = account("部分付款", "5000");
+        Long docId = purchase(s.getId(), p.getId(), "100", "3.5", LocalDate.now()); // 350
+        SettleBill bill = billOf(docId);
+        settleBillService.confirm(bill.getId(), null, OP, OPERATOR, ROLE_BOSS);
+        Long payId = payment(s.getId(), a.getId(), "200", bill.getId()); // 部分付款 → 差异挂起
+        voucher(payId);
+        paymentService.confirm(payId, OP, OPERATOR);
+        assertEquals(SettleBill.ST_DIFF, billMapper.selectById(bill.getId()).getBillStatus());
+
+        redFlushService.execute(docId, OP, "部分付款后发现整单错", false);
+
+        SettleBill closed = billMapper.selectById(bill.getId());
+        assertEquals(SettleBill.ST_VOID, closed.getBillStatus(), "原结算单关闭,剩余150不再看似该付");
+        assertTrue(closed.getDiffNote().contains("红字"), "diff_note 说明已付部分由红字承接:" + closed.getDiffNote());
+        SettleBill red = billMapper.selectOne(new LambdaQueryWrapper<SettleBill>()
+                .eq(SettleBill::getSupplierId, s.getId()).eq(SettleBill::getDirection, SettleBill.DIR_RED));
+        assertNotNull(red);
+        assertEquals(0, red.getAmountDue().compareTo(new BigDecimal("200.00")), "红字=已付额");
+        // 已作废单拒绝再关联新付款
+        BizException e = assertThrows(BizException.class,
+                () -> payment(s.getId(), a.getId(), "150", bill.getId()));
+        assertTrue(e.getMessage().contains("待付款/差异挂起"), e.getMessage());
+    }
 }

@@ -12,6 +12,9 @@ import top.aole.vend.modules.basedata.application.OpLogService;
 import top.aole.vend.modules.money.dto.MoneyDtos;
 import top.aole.vend.modules.money.service.AccountService;
 import top.aole.vend.modules.money.service.SettleModeService;
+import top.aole.vend.modules.settle.dto.SettleDtos;
+import top.aole.vend.modules.settle.service.PayableService;
+import top.aole.vend.modules.settlement.mapper.SettlementQueryMapper;
 import top.aole.vend.modules.stocktake.money.domain.entity.CashCheck;
 import top.aole.vend.modules.stocktake.money.domain.entity.CashCheckItem;
 import top.aole.vend.modules.stocktake.money.dto.CashMoneyDtos.ActualRow;
@@ -31,7 +34,9 @@ import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.YearMonth;
 import java.time.format.DateTimeFormatter;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.stream.Collectors;
 
 /**
@@ -62,6 +67,10 @@ public class CashCheckService {
     private final AccountService accountService;
     private final SettleModeService settleModeService;
     private final CashAdjustService cashAdjustService;
+    /** M3-9 P1-2:应付余额单一真相源(§7.3 公式唯一实现,与 p8 供应商卡同口径) */
+    private final PayableService payableService;
+    /** M3-9 P1-1:平台待结算真值口径(与结算单/总览同源,别处不许另抄) */
+    private final SettlementQueryMapper settlementQueryMapper;
     private final OpLogService opLogService;
 
     // ============================== 开始核对(快照系统数) ==============================
@@ -96,20 +105,34 @@ public class CashCheckService {
             insertItem(check.getId(), CashCheckItem.TYPE_ACCOUNT, a.getId(), a.getAccountName(),
                     a.getBalance(), null, userId);
         }
-        // ② 平台到账核对行:模式已定型才核(平台待结算虚账余额留档);UNSET 整块跳过
+        // ② 平台到账核对行:模式已定型才核;UNSET 整块跳过。
+        // M3-9 P1-1:PLATFORM 模式系统数取"平台待结算"真值(SettlementQueryMapper.pendingBalance,
+        // 与结算单/总览同源口径)——虚拟账户的流水余额恒为期初(无任何写入方),不能给老板看。
         if (!unset) {
+            boolean platform = SettleModeService.MODE_PLATFORM.equals(mode);
+            BigDecimal pendingTrue = platform ? settlementQueryMapper.pendingBalance() : null;
             for (MoneyDtos.AccountRow a : accounts) {
                 if (Boolean.TRUE.equals(a.getIsVirtual()) && "平台待结算".equals(a.getAccountType())
                         && a.getStatus() != null && a.getStatus() == 1) {
                     insertItem(check.getId(), CashCheckItem.TYPE_PLATFORM, a.getId(), a.getAccountName(),
-                            a.getBalance(), null, userId);
+                            platform ? pendingTrue : a.getBalance(), null, userId);
                 }
             }
         }
-        // ③ 应付核对行:有过结算单的供应商,系统数=Σ正常实结−Σ红字−Σ已付款
-        for (SupplierPayableRow s : queryMapper.supplierPayables()) {
+        // ③ 应付核对行:系统数一律走 PayableService §7.3 公式(M3-9 P1-2 单一真相源,
+        // 与 p8 供应商卡/对账单同一实现);只列有往来(期初/采购/退货/抵扣/付款任一非零)的供应商
+        Map<Long, Long> lastDocMap = new HashMap<>();
+        for (SupplierPayableRow s : queryMapper.lastSourceDocIds()) {
+            lastDocMap.put(s.getSupplierId(), s.getLastSourceDocId());
+        }
+        for (SettleDtos.SupplierOverviewRow s : payableService.overview()) {
+            boolean hasActivity = nzSig(s.getOpeningPayable()) || nzSig(s.getPurchaseTotal())
+                    || nzSig(s.getReturnTotal()) || nzSig(s.getDeductionTotal()) || nzSig(s.getPaymentTotal());
+            if (!hasActivity) {
+                continue;
+            }
             insertItem(check.getId(), CashCheckItem.TYPE_PAYABLE, s.getSupplierId(), s.getSupplierName(),
-                    s.getPayable(), s.getLastSourceDocId(), userId);
+                    s.getBalance(), lastDocMap.get(s.getSupplierId()), userId);
         }
         opLogService.record(operator, "开始钱盘核对", "cash_check", check.getId(), null,
                 JSONUtil.toJsonStr(check));
@@ -405,5 +428,10 @@ public class CashCheckService {
 
     private static String plain(BigDecimal v) {
         return v == null ? "—" : v.stripTrailingZeros().toPlainString();
+    }
+
+    /** 非零判断(null 视为 0) */
+    private static boolean nzSig(BigDecimal v) {
+        return v != null && v.signum() != 0;
     }
 }

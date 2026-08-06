@@ -151,7 +151,7 @@ class SettlementFlowTest extends BaseIntegrationTest {
     @Test
     @DisplayName("② PLATFORM 待结算口径(P0-3):仅正常−退款;兑换/测试/线下补录一律不计")
     void platformPendingBalanceScope() {
-        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, OPERATOR);
+        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, OPERATOR, "老板");
         saleFull("5.0", "正常", "2.0", false, D1.atTime(10, 0));
         saleFull("-3.0", "退款", "-1.0", false, D1.atTime(11, 0));
         saleFull("7.0", "兑换", "4.0", false, D1.atTime(12, 0));    // 不入待结算
@@ -168,7 +168,7 @@ class SettlementFlowTest extends BaseIntegrationTest {
     @Test
     @DisplayName("③ PLATFORM 全链:凭证→确认=快照+两差绿灯+回填+两笔流水(货款结算毛额收/手续费支),净入账=实际到账")
     void platformFullChain() {
-        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, OPERATOR);
+        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, OPERATOR, "老板");
         Long acc = realAccount("0");
         SaleRecord s1 = saleFull("600.0", "正常", "200.0", false, D1.atTime(9, 0));
         SaleRecord s2 = saleFull("-100.0", "退款", "-30.0", false, D31.atTime(20, 0));
@@ -210,7 +210,7 @@ class SettlementFlowTest extends BaseIntegrationTest {
     @Test
     @DisplayName("④ 凭证硬门禁:无平台账单凭证确认 → 拦且 0 流水 0 回填;传凭证后放行")
     void voucherHardGate() {
-        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, OPERATOR);
+        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, OPERATOR, "老板");
         Long acc = realAccount("0");
         SaleRecord s1 = saleFull("100.0", "正常", "40.0", false, D1.atTime(9, 0));
         Long billId = settlementService.create(platformReq("100", "5", "95", acc), OP, OPERATOR);
@@ -229,7 +229,7 @@ class SettlementFlowTest extends BaseIntegrationTest {
     @Test
     @DisplayName("⑤ 两差红灯:漏单差/扣款差超阈值±1 → 差异挂起(钱与回填照落);复核说明必填后收口")
     void diffRedLightAndResolve() {
-        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, OPERATOR);
+        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, OPERATOR, "老板");
         Long acc = realAccount("0");
         saleFull("100.0", "正常", "40.0", false, D1.atTime(9, 0));
         // 平台账单 120(漏单差=100−120=−20 红);预计 120−10=110 vs 到账 105(扣款差=5 红)
@@ -255,7 +255,7 @@ class SettlementFlowTest extends BaseIntegrationTest {
     @Test
     @DisplayName("⑥ 回填幂等+防双击:二次确认被拒;已归属行永不重写;下一单只吃新增在途")
     void backfillIdempotentAndDoubleClickGuard() {
-        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, OPERATOR);
+        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, OPERATOR, "老板");
         Long acc = realAccount("0");
         SaleRecord s1 = saleFull("100.0", "正常", "40.0", false, D1.atTime(9, 0));
         Long bill1 = settlementService.create(platformReq("100", "0", "100", acc), OP, OPERATOR);
@@ -281,7 +281,7 @@ class SettlementFlowTest extends BaseIntegrationTest {
     @Test
     @DisplayName("⑦ DIRECT 核对单:HD-前缀,确认只对差——0 流水 0 回填(钱已直连入账,防双记);超差也只挂起提示")
     void directCheckBillNoMoneyNoBackfill() {
-        settleModeService.set(SettleModeService.MODE_DIRECT, OP, OPERATOR);
+        settleModeService.set(SettleModeService.MODE_DIRECT, OP, OPERATOR, "老板");
         SaleRecord s1 = saleFull("5.0", "正常", "2.0", false, D1.atTime(10, 0));
         saleFull("-3.0", "退款", "-1.0", false, D1.atTime(11, 0));
         saleFull("7.0", "兑换", "4.0", false, D1.atTime(12, 0));
@@ -311,11 +311,11 @@ class SettlementFlowTest extends BaseIntegrationTest {
     @Test
     @DisplayName("⑧ 模式快照防呆:PLATFORM 录的单,定型改 DIRECT 后确认被拒 → 作废重录;二次作废被拒")
     void modeSnapGuard() {
-        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, OPERATOR);
+        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, OPERATOR, "老板");
         Long acc = realAccount("0");
         Long billId = settlementService.create(platformReq("10", "1", "9", acc), OP, OPERATOR);
 
-        settleModeService.set(SettleModeService.MODE_DIRECT, OP, OPERATOR);
+        settleModeService.set(SettleModeService.MODE_DIRECT, OP, OPERATOR, "老板");
         BizException e = assertThrows(BizException.class,
                 () -> settlementService.confirm(billId, OP, OPERATOR));
         assertTrue(e.getMessage().contains("重录"), "指路作废重录:" + e.getMessage());
@@ -332,7 +332,7 @@ class SettlementFlowTest extends BaseIntegrationTest {
     @Test
     @DisplayName("⑨ PLATFORM 录入校验:虚拟账户拒/停用账户拒/手续费缺失拒/区间倒置拒")
     void platformCreateValidation() {
-        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, OPERATOR);
+        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, OPERATOR, "老板");
         Long virtual = virtualAccount();
         BizException e1 = assertThrows(BizException.class,
                 () -> settlementService.create(platformReq("10", "1", "9", virtual), OP, OPERATOR));
@@ -389,5 +389,37 @@ class SettlementFlowTest extends BaseIntegrationTest {
         assertEquals(0, roi.getSubsidyUsed().compareTo(BigDecimal.ZERO));
         assertEquals(0, roi.getSubsidyConfirmed().compareTo(new BigDecimal("5.00")), "作废的 3 不计");
         assertEquals(0, roi.getNet().compareTo(new BigDecimal("-1.5")), "净对冲=5−6.5(还差 1.5 没被补贴盖住)");
+    }
+
+    @Test
+    @DisplayName("P1-5:差异收口留痕进报表——收口按差额落一笔非现金流水(账户余额不动,进利润表行);重复收口被抢占拒绝")
+    void resolveDiffPostsCashlessFlow() {
+        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, OPERATOR, "老板");
+        Long acc = realAccount("0");
+        saleFull("100.0", "正常", "40.0", false, D1.atTime(9, 0));
+        // 账单100(漏单差0);预计100−0=100 vs 到账80 → 扣款差20(平台多扣) → 差异挂起
+        Long billId = settlementService.create(platformReq("100", "0", "80", acc), OP, OPERATOR);
+        voucher(billId);
+        SettlementDtos.ConfirmResult r = settlementService.confirm(billId, OP, OPERATOR);
+        assertEquals(Settlement.ST_DIFF, r.getStlStatus());
+        assertEquals(1, flowsOf(billId).size(), "确认只落货款结算 1 条(fee=0)");
+        assertEquals(0, accountService.balanceOf(acc).compareTo(new BigDecimal("80")));
+
+        settlementService.resolveDiff(billId, "核实:平台封站违约扣款 20 元", OP, OPERATOR);
+
+        List<CashFlow> flows = flowsOf(billId);
+        assertEquals(2, flows.size(), "收口多一条差额留痕流水");
+        CashFlow diff = flows.stream().filter(f -> "结算差异损失".equals(f.getCategory()))
+                .findFirst().orElseThrow(AssertionError::new);
+        assertEquals("支", diff.getDirection());
+        assertEquals(0, diff.getAmount().compareTo(new BigDecimal("20")), "差额=漏单差0+扣款差20");
+        assertNull(diff.getAccountId(), "非现金流水不挂账户");
+        assertEquals("杂费", diff.getPlLine(), "平台吞掉的钱进利润表杂费行,不再蒸发");
+        assertEquals(0, accountService.balanceOf(acc).compareTo(new BigDecimal("80")), "账户余额不动(真钱在确认时已落准)");
+
+        // 重复收口被拒(已收口/抢占)→ 不会双落差额流水
+        assertThrows(BizException.class,
+                () -> settlementService.resolveDiff(billId, "再来一次", OP, OPERATOR));
+        assertEquals(2, flowsOf(billId).size());
     }
 }

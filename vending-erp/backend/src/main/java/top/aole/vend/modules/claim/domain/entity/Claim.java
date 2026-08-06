@@ -26,6 +26,8 @@ import java.util.Set;
 public class Claim extends BaseEntity {
 
     public static final String STATUS_PENDING = "申请中";
+    /** 确认中(M3-9 P0-2 条件更新抢占过渡态:仅存在于到账事务内) */
+    public static final String STATUS_CONFIRMING = "确认中";
     public static final String STATUS_RECEIVED = "已到账";
     public static final String STATUS_ABANDONED = "放弃";
 

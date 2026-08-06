@@ -213,13 +213,22 @@ class Scenario03MonthlyStocktakeTest extends RegressionSupport {
         b.setSupplierName("回归供应商B");
         b.setOpeningPayable(BigDecimal.ZERO);
         supplierMapper.insert(b);
-        // 结算单链(direction 红字通道本类第三例已验;这里造正常应付,来源单据=红冲跳转目标)
-        jdbc.update("INSERT INTO yc_vend_settle_bill (bill_no, bill_type, direction, supplier_id, " +
-                        "source_doc_id, amount_due, amount_actual, bill_status) VALUES (?,?,?,?,?,?,?,?)",
-                "JS-RG-" + SEQ.incrementAndGet(), "应付", "正常", a.getId(), 777L, "500", "500", "待付款");
-        jdbc.update("INSERT INTO yc_vend_settle_bill (bill_no, bill_type, direction, supplier_id, " +
-                        "source_doc_id, amount_due, amount_actual, bill_status) VALUES (?,?,?,?,?,?,?,?)",
-                "JS-RG-" + SEQ.incrementAndGet(), "应付", "正常", b.getId(), 888L, "200", "200", "待付款");
+        // 真实应付链(M3-9 P1-2:钱盘应付=PayableService §7.3 单一口径):
+        // 带供应商的采购入库确认 → 自动生成结算单,来源单据=红冲跳转目标
+        Product pa = product("回归应付商品A", null, null);
+        Product pb = product("回归应付商品B", null, null);
+        top.aole.vend.modules.doc.dto.DocCreateReq reqA = req(DocType.PURCHASE_IN, null,
+                DocService.SOURCE_MANUAL, LocalDate.now(), new Object[]{pa.getId(), "100", "5"}); // 500
+        reqA.setSupplierId(a.getId());
+        Long docA = docService.createDoc(reqA, OP);
+        docService.submit(docA, OP);
+        docService.confirm(docA, OP, false, null);
+        top.aole.vend.modules.doc.dto.DocCreateReq reqB = req(DocType.PURCHASE_IN, null,
+                DocService.SOURCE_MANUAL, LocalDate.now(), new Object[]{pb.getId(), "100", "2"}); // 200
+        reqB.setSupplierId(b.getId());
+        Long docB = docService.createDoc(reqB, OP);
+        docService.submit(docB, OP);
+        docService.confirm(docB, OP, false, null);
 
         Long checkId = cashCheckService.start(OP, OPERATOR);
         CashMoneyDtos.CheckDetailResp detail = cashCheckService.detail(checkId);
@@ -227,7 +236,8 @@ class Scenario03MonthlyStocktakeTest extends RegressionSupport {
                 .filter(r -> r.getRefId().equals(a.getId())).findFirst().orElseThrow(AssertionError::new);
         CashMoneyDtos.CheckItemRow rowB = detail.getPayableItems().stream()
                 .filter(r -> r.getRefId().equals(b.getId())).findFirst().orElseThrow(AssertionError::new);
-        assertEquals(0, rowA.getSystemAmount().compareTo(new BigDecimal("500")), "系统应付=Σ正常实结");
+        assertEquals(0, rowA.getSystemAmount().compareTo(new BigDecimal("500")),
+                "系统应付=§7.3 公式(期初0+采购500,与 p8 供应商卡单一口径)");
 
         // 录对方账:A 少 20(漏录付款/抵扣);B 多 30(可能重复结算 → 红冲)
         CashMoneyDtos.SaveActualsReq save = new CashMoneyDtos.SaveActualsReq();
@@ -251,7 +261,7 @@ class Scenario03MonthlyStocktakeTest extends RegressionSupport {
         // 出口②红冲:跳对应单据(前端打开单据抽屉走既有红冲入口 → 连锁生成应付红字)
         CashMoneyDtos.PayableExitResp redFlush = cashCheckService.markPayableExit(
                 checkId, rowB.getId(), CashCheckItem.EXIT_RED_FLUSH, OP, OPERATOR);
-        assertEquals(888L, redFlush.getSourceDocId(), "红冲出口带上对应来源单据");
+        assertEquals(docB, redFlush.getSourceDocId(), "红冲出口带上对应来源单据");
 
         cashCheckService.finish(checkId, OP, OPERATOR);
         assertEquals("已完成", cashCheckService.detail(checkId).getCheckStatus(),

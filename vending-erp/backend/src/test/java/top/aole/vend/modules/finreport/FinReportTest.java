@@ -79,6 +79,16 @@ class FinReportTest extends BaseIntegrationTest {
     private ApplicationEventPublisher publisher;
     @Autowired
     private JdbcTemplate jdbc;
+    @Autowired
+    private top.aole.vend.modules.money.mapper.CashFlowMapper cashFlowMapper;
+    @Autowired
+    private top.aole.vend.modules.doc.service.CostAdjustService costAdjustService;
+    @Autowired
+    private top.aole.vend.modules.settle.service.SettleBillService settleBillService;
+    @Autowired
+    private top.aole.vend.modules.settle.service.DeductionService deductionService;
+    @Autowired
+    private top.aole.vend.modules.settle.mapper.SettleBillMapper settleBillMapper;
 
     // ============================== 造数工具 ==============================
 
@@ -170,7 +180,7 @@ class FinReportTest extends BaseIntegrationTest {
         Product p = product("家底可乐");
         stockWarehouse(p.getId(), "10");
         // 待结算(PLATFORM):正常 10 − 退款 3 = 7;兑换/已结算不参与
-        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, "M36测试员");
+        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, "M36测试员", "老板");
         sale(p.getId(), "1", "10.00", "正常", LocalDateTime.now(), null, null);
         sale(p.getId(), "1", "-3.00", "退款", LocalDateTime.now(), null, null);
         sale(p.getId(), "1", "5.00", "兑换", LocalDateTime.now(), null, null);
@@ -436,5 +446,89 @@ class FinReportTest extends BaseIntegrationTest {
         profitReportService.refreshLockDiffNotes();
         assertNull(jdbc.queryForMap("SELECT lock_diff_note FROM yc_vend_settlement WHERE id=?", stlId)
                 .get("lock_diff_note"), "差异消失 → 清提示");
+    }
+
+    // ============================== M3-9 盲审修复回归 ==============================
+
+    @Test
+    @DisplayName("P1-3:待结算取数补 is_deleted=0 / offline_flag=0——软删行与线下行不再被资产快照吸入")
+    void platformPendingExcludesDeletedAndOffline() {
+        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, "M36测试员", "老板");
+        Product p = product("口径过滤商品");
+        sale(p.getId(), "1", "10.00", "正常", LocalDateTime.now(), null, null);
+        Long deleted = sale(p.getId(), "1", "5.00", "正常", LocalDateTime.now(), null, null);
+        Long offline = sale(p.getId(), "1", "7.00", "正常", LocalDateTime.now(), null, null);
+        jdbc.update("UPDATE yc_vend_sale_record SET is_deleted=1 WHERE id=?", deleted);
+        jdbc.update("UPDATE yc_vend_sale_record SET offline_flag=1 WHERE id=?", offline);
+
+        FinReportDtos.AssetSnapshotResp resp = assetSnapshotService.current();
+        assertMoney("10.00", resp.getPlatformPending(),
+                "待结算=10(软删5/线下7不计;与 SettlementQueryMapper.SETTLE_SCOPE 同口径)");
+    }
+
+    @Test
+    @DisplayName("P1-4①:成本调整已售部分Δ接入利润表——确认后落非现金流水(不挂账户),成本调整行不再恒0")
+    void costAdjustSoldPortionFlowsIntoProfit() {
+        Product p = product("单价录错商品");
+        // 昨日采购 10 件 @3.5(录错,实际 4.0);今日卖 5 件 → 已售 5 未售 5
+        LocalDate yesterday = LocalDate.now().minusDays(1);
+        Long docId = confirmedDoc(DocType.PURCHASE_IN, null, DocService.SOURCE_MANUAL,
+                yesterday, false, yesterday.atTime(8, 0), new Object[]{p.getId(), "10", "3.5"});
+        sale(p.getId(), "5", "30.00", "正常", LocalDateTime.now(), null, null);
+
+        top.aole.vend.modules.doc.dto.CostAdjustReq req = new top.aole.vend.modules.doc.dto.CostAdjustReq();
+        top.aole.vend.modules.doc.dto.CostAdjustReq.Line line = new top.aole.vend.modules.doc.dto.CostAdjustReq.Line();
+        line.setDocItemId(docService.itemsOf(docId).get(0).getId());
+        line.setCorrectPrice(new BigDecimal("4.0"));
+        req.setLines(java.util.Collections.singletonList(line));
+        Long adjustDocId = costAdjustService.execute(docId, req, OP);
+
+        // 非现金流水:category=成本调整,不挂账户,支 2.5(已售 5 × Δ0.5)
+        List<top.aole.vend.modules.money.domain.entity.CashFlow> flows = cashFlowMapper.selectList(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<top.aole.vend.modules.money.domain.entity.CashFlow>()
+                        .eq(top.aole.vend.modules.money.domain.entity.CashFlow::getRefDocType, "成本调整单")
+                        .eq(top.aole.vend.modules.money.domain.entity.CashFlow::getRefDocId, adjustDocId));
+        assertEquals(1, flows.size(), "已售部分Δ落一条流水(M1-7 说好的 M3 接线)");
+        assertEquals("成本调整", flows.get(0).getCategory());
+        assertEquals("支", flows.get(0).getDirection(), "成本上调 → 利润应降 → 支");
+        assertMoney("2.50", flows.get(0).getAmount(), "已售Δ=5×0.5");
+        assertNull(flows.get(0).getAccountId(), "非现金:不挂任何账户,余额不受影响");
+
+        FinReportDtos.ProfitResp resp = profitReportService.monthly(month(0));
+        assertMoney("-2.50", row(resp, "costAdjust"), "利润表成本调整行不再恒 0");
+    }
+
+    @Test
+    @DisplayName("P1-4②:补贴行接入 deduction——抵扣确认单已抵扣额按所冲结算单入账月聚合进其他收入-补贴行")
+    void subsidyRowAggregatesUsedDeductions() {
+        Supplier sup = supplier("补贴供应商", "0");
+        Product p = product("补贴商品");
+        top.aole.vend.modules.doc.dto.DocCreateReq req = req(DocType.PURCHASE_IN, null,
+                DocService.SOURCE_MANUAL, LocalDate.now(), new Object[]{p.getId(), "100", "3.5"});
+        req.setSupplierId(sup.getId());
+        Long docId = docService.createDoc(req, OP);
+        docService.submit(docId, OP);
+        docService.confirm(docId, OP, false, null); // 350,自动生成结算单
+
+        top.aole.vend.modules.settle.dto.SettleDtos.DeductionCreateReq dedReq =
+                new top.aole.vend.modules.settle.dto.SettleDtos.DeductionCreateReq();
+        dedReq.setSupplierId(sup.getId());
+        dedReq.setDedSource("兑换");
+        dedReq.setAmount(new BigDecimal("51.63"));
+        dedReq.setPeriodDesc("厂家已结账(本月兑换)");
+        Long dedId = deductionService.create(dedReq, OP, "M36测试员");
+        // 待抵扣不进补贴行
+        assertMoney("0.00", row(profitReportService.monthly(month(0)), "otherIncomeSubsidy"),
+                "待抵扣尚未确认使用,不进补贴行");
+
+        top.aole.vend.modules.settle.domain.entity.SettleBill bill = settleBillMapper.selectOne(
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<top.aole.vend.modules.settle.domain.entity.SettleBill>()
+                        .eq(top.aole.vend.modules.settle.domain.entity.SettleBill::getSourceDocId, docId)
+                        .last("LIMIT 1"));
+        settleBillService.confirm(bill.getId(), java.util.Collections.singletonList(dedId), OP, "M36测试员", "老板");
+
+        FinReportDtos.ProfitResp resp = profitReportService.monthly(month(0));
+        assertMoney("51.63", row(resp, "otherIncomeSubsidy"),
+                "已抵扣补贴按所冲结算单入账月进补贴行(不落现金流水,直接聚合 deduction)");
     }
 }

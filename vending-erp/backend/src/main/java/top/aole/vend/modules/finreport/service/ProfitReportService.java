@@ -128,7 +128,11 @@ public class ProfitReportService {
         BigDecimal costAdjustFlow = net(lineNet, PlLine.COST_ADJUST);
         BigDecimal claimIncome = net(lineNet, PlLine.OTHER_INCOME_CLAIM);
         BigDecimal offlineIncome = net(lineNet, PlLine.OTHER_INCOME_OFFLINE);
-        BigDecimal subsidyIncome = net(lineNet, PlLine.OTHER_INCOME_SUBSIDY);
+        // M3-9 P1-4:补贴走抵扣确认单(冲应付不落现金流水)——已抵扣额按所冲结算单入账月聚合,
+        // 与现金到账补贴流水(EXCHANGE_SUBSIDY,当前无写入方,兜底)相加;否则该行恒 0,
+        // 补贴对冲兑换成本的经济收益在利润表上完全不体现
+        BigDecimal subsidyDeduction = nz(queryMapper.subsidyUsedByPeriod(period));
+        BigDecimal subsidyIncome = net(lineNet, PlLine.OTHER_INCOME_SUBSIDY).add(subsidyDeduction);
         BigDecimal shrinkFlow = net(lineNet, PlLine.SHRINKAGE);
         resp.setNonPlNet(scale2(net(lineNet, PlLine.NON_PL)));
 
@@ -158,7 +162,8 @@ public class ProfitReportService {
         addRow(resp, "otherIncomeOffline", PlLine.OTHER_INCOME_OFFLINE.getLabel(), offlineIncome, false,
                 "机器故障线下直收等平台外收入");
         addRow(resp, "otherIncomeSubsidy", PlLine.OTHER_INCOME_SUBSIDY.getLabel(), subsidyIncome, false,
-                "厂家兑换/活动补贴到账");
+                String.format("厂家兑换/活动补贴:抵扣确认单已抵扣额 %s(按所冲结算单入账月归月,冲应付不落现金)"
+                        + " + 现金到账补贴流水(M3-9 P1-4 口径)", plain(subsidyDeduction)));
         addRow(resp, "priorAdjust", "上期调整", priorAdjust, false,
                 adjCount == 0 ? "本月无锁账后补导"
                         : String.format("锁账后补导 %d 笔:收入 %s − 成本 %s(旧月份报表永不重算,由本行承接,P0-2)",

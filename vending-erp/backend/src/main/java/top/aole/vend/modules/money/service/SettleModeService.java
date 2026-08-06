@@ -9,6 +9,7 @@ import top.aole.vend.modules.basedata.application.OpLogService;
 import top.aole.vend.modules.money.domain.entity.ConfigEntry;
 import top.aole.vend.modules.money.dto.MoneyDtos;
 import top.aole.vend.modules.money.mapper.ConfigEntryMapper;
+import top.aole.vend.modules.period.service.PeriodLockService;
 
 import java.util.Arrays;
 import java.util.List;
@@ -39,6 +40,8 @@ public class SettleModeService {
 
     private final ConfigEntryMapper configMapper;
     private final OpLogService opLogService;
+    /** M3-9 P1-7:老板角色守卫(与解锁/结算单复核同一把尺子) */
+    private final PeriodLockService periodLockService;
 
     public MoneyDtos.SettleModeResp get() {
         ConfigEntry entry = find();
@@ -60,8 +63,15 @@ public class SettleModeService {
         return get().getMode();
     }
 
+    /**
+     * 设置结算模式(M3-9 P1-7:限老板角色)——这是全系统钱账口径的总开关
+     * (切换后旧单要作废重录、资产快照"平台待结算"项清零/出现),防呆等级不能低于结算单复核。
+     *
+     * @param role X-User-Role 占位角色头,必须=老板
+     */
     @Transactional(rollbackFor = Exception.class)
-    public void set(String mode, Long userId, String operator) {
+    public void set(String mode, Long userId, String operator, String role) {
+        periodLockService.assertBossRole(role, "结算模式定型(全系统钱账口径总开关)");
         if (!MODES.contains(mode)) {
             throw new BizException("结算模式只能是 UNSET/PLATFORM/DIRECT:" + mode);
         }

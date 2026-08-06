@@ -138,6 +138,14 @@ public class ClaimService {
             throw new BizException(String.format(
                     "索赔单[%s]未上传赔付凭证——先传厂家/平台赔付凭证(refType=claim)再登记到账", claim.getClaimNo()));
         }
+        // 条件更新抢占(M3-9 P0-2):并发双登记会落两笔 CLAIM_INCOME,其他收入-赔付直接翻倍
+        int claimed = claimMapper.update(null, new LambdaUpdateWrapper<Claim>()
+                .eq(Claim::getId, id)
+                .eq(Claim::getClaimStatus, Claim.STATUS_PENDING)
+                .set(Claim::getClaimStatus, Claim.STATUS_CONFIRMING));
+        if (claimed != 1) {
+            throw new BizException(String.format("索赔单[%s]已被他人处理(并发登记防双记),请刷新查看", claim.getClaimNo()));
+        }
         BigDecimal received = req.getReceivedAmount() == null ? claim.getAmount() : req.getReceivedAmount();
         if (received.compareTo(BigDecimal.ZERO) <= 0) {
             throw new BizException("实际到账金额必须为正数:" + received);

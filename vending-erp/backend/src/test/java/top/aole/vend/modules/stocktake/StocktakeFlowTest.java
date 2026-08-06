@@ -246,10 +246,11 @@ class StocktakeFlowTest extends BaseIntegrationTest {
     void machineLossPairKeepsWarehouseNet() {
         Product p = product("机器盘亏品");
         Machine m = machine("盘亏机");
-        LocalDate day = LocalDate.now();
         stockWarehouse(p.getId(), "100");
+        // 锚点必须早于确认时刻(M3-9 稳定性修复:原写死 8:00,凌晨跑测试时 now<8:00,
+        // 确认落的配对单/盘点锚点被 8:00 快照盖过 → 机器账推算回 10 而非 9)
         stockService.recordMachineSnapshot(m.getId(), p.getId(), "A1", new BigDecimal("10"),
-                MachineStockSnapshot.SRC_BACKEND_PAGE, day.atTime(8, 0), OP);
+                MachineStockSnapshot.SRC_BACKEND_PAGE, java.time.LocalDateTime.now().minusHours(1), OP);
 
         Long stId = createStocktake(Stocktake.SCOPE_MACHINE, m.getId());
         record(stId, p.getId(), "9", StocktakeItem.REASON_SWALLOW);

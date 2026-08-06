@@ -116,6 +116,15 @@ public class ExpenseService {
             throw new BizException(String.format(
                     "支出单[%s]未上传凭证——先传付款截图/发票(refType=expense)再确认落流水", exp.getExpNo()));
         }
+        // 条件更新抢占(M3-9 P0-2):并发双确认会落两笔支出(杂费翻倍+设备台账插两行)
+        int claimed = expenseMapper.update(null,
+                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Expense>()
+                        .eq(Expense::getId, id)
+                        .eq(Expense::getExpStatus, Expense.STATUS_PENDING)
+                        .set(Expense::getExpStatus, Expense.STATUS_CONFIRMING));
+        if (claimed != 1) {
+            throw new BizException(String.format("支出单[%s]已被他人处理(并发确认防双记),请刷新查看", exp.getExpNo()));
+        }
         String before = JSONUtil.toJsonStr(exp);
 
         // 过账:唯一合法通道 = 单据确认事件(写手校验失败整体回滚)

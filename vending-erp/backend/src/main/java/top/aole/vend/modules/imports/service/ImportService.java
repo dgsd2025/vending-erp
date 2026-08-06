@@ -39,6 +39,7 @@ import top.aole.vend.modules.imports.dto.ImportDtos.PriceConfirmReq;
 import top.aole.vend.modules.imports.dto.ImportDtos.ReprocessResp;
 import top.aole.vend.modules.imports.dto.ImportDtos.RollbackResp;
 import top.aole.vend.modules.imports.domain.entity.ImportBatch;
+import top.aole.vend.modules.settle.service.SettleBillService;
 import top.aole.vend.modules.imports.domain.entity.ImportError;
 import top.aole.vend.modules.imports.mapper.ImportBatchMapper;
 import top.aole.vend.modules.imports.mapper.ImportErrorMapper;
@@ -111,6 +112,7 @@ public class ImportService {
     private final AliasService aliasService;
     private final DocService docService;
     private final StockService stockService;
+    private final SettleBillService settleBillService;
     private final OpLogService opLogService;
     /** M2-3:通道2导入完成后核销 Pre-kit 配货单(afterImport 钩子唯一挂点) */
     private final PrekitService prekitService;
@@ -650,10 +652,16 @@ public class ImportService {
                 for (DocHead d : matchedRefs) {
                     resp.getBlockers().add("手工预挂单[" + d.getDocNo() + "]已被本批冲抵,请先人工处理该单");
                 }
+                // 下游引用③(M3-9 P0-3):应付链——来源单据挂着的结算单已付款/已进应付流程 → 拒绝,
+                // 指引走红冲连锁(它会正确生成应付红字);仅[待确认无付款]的在下方随回滚同事务作废
+                resp.getBlockers().addAll(settleBillService.importRollbackBlockers(docIds));
                 if (!resp.getBlockers().isEmpty()) {
                     resp.setSuccess(false);
                     return resp;
                 }
+                // 应付链连锁:待确认无付款的结算单作废 + 释放已带入抵扣(同事务)
+                resp.setSettleBillsVoided(settleBillService.voidUnpaidOnImportRollback(
+                        docIds, batch.getBatchNo(), IMPORT_USER, operator));
 
                 // 反做:库存流水物理删 + 机器快照删 + 单据作废(导入中心特权通道,绕状态机,op_log 留痕)
                 List<StockLedger> ledgers = stockLedgerMapper.selectList(new LambdaQueryWrapper<StockLedger>()

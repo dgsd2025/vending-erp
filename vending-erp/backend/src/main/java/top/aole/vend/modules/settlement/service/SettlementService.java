@@ -284,7 +284,14 @@ public class SettlementService {
 
     // ============================== 差异复核 / 作废 ==============================
 
-    /** 差异挂起 → 收口(说明必填留痕;钱与回填在确认时已落,这里只收状态) */
+    /**
+     * 差异挂起 → 收口(说明必填留痕):
+     * M3-9 P1-5:PLATFORM 单收口时,差额不再只留一行字——按方向落一笔**非现金**流水
+     * (account_id=NULL,只进利润表行,不动账户余额;真钱在确认时已按实际到账落准):
+     *   蒸发额 = 漏单差 + 扣款差 = 已清出待结算的系统额 − 实际入账毛额;
+     *   >0(平台多扣/吞货)→ 结算差异损失(杂费行);<0(多到账)→ 结算差异多收(其他收入-平台外)。
+     * 条件更新抢占防双收口(双击会把差额流水落两遍)。
+     */
     @Transactional(rollbackFor = Exception.class)
     public void resolveDiff(Long id, String note, Long userId, String operator) {
         if (note == null || note.trim().isEmpty()) {
@@ -294,12 +301,41 @@ public class SettlementService {
         if (!Settlement.ST_DIFF.equals(s.getStlStatus())) {
             throw new BizException(String.format("单据[%s]状态为[%s],仅[差异挂起]需要复核收口", s.getStmtNo(), s.getStlStatus()));
         }
-        s.setStlStatus(SettleModeService.MODE_PLATFORM.equals(s.getModeSnap())
-                ? Settlement.ST_SETTLED : Settlement.ST_CHECKED);
-        s.setDiffNote(note.trim());
-        s.setUpdateUser(userId);
-        settlementMapper.updateById(s);
-        opLogService.record(operator, "结算差异复核收口", "settlement", id, null, note.trim());
+        boolean platform = SettleModeService.MODE_PLATFORM.equals(s.getModeSnap());
+        String finalStatus = platform ? Settlement.ST_SETTLED : Settlement.ST_CHECKED;
+        // 条件更新抢占(防双收口双落差额流水,同 confirm 的 待核对→核销中 模式)
+        int claimed = settlementMapper.update(null, new LambdaUpdateWrapper<Settlement>()
+                .eq(Settlement::getId, id)
+                .eq(Settlement::getStlStatus, Settlement.ST_DIFF)
+                .set(Settlement::getStlStatus, finalStatus)
+                .set(Settlement::getDiffNote, note.trim())
+                .set(Settlement::getUpdateUser, userId));
+        if (claimed != 1) {
+            throw new BizException(String.format("单据[%s]已被他人收口(防重复收口),请刷新查看", s.getStmtNo()));
+        }
+        String flowNote = "";
+        if (platform) {
+            // 蒸发额 = diffSales + diffArrival = 系统额 −(实际到账+手续费):待结算清掉的钱与真钱入账的缺口
+            BigDecimal vanish = nz(s.getDiffSales()).add(nz(s.getDiffArrival()));
+            if (vanish.compareTo(BigDecimal.ZERO) != 0) {
+                MoneyPostingEvent event = new MoneyPostingEvent(REF_DOC_TYPE, id, userId);
+                String remark = String.format("结算差异收口 %s:漏单差%s 扣款差%s,核实说明:%s",
+                        s.getStmtNo(), nz(s.getDiffSales()), nz(s.getDiffArrival()), note.trim());
+                if (vanish.compareTo(BigDecimal.ZERO) > 0) {
+                    event.pnlOutflow(vanish, CashFlowCategory.SETTLE_DIFF_LOSS, LocalDateTime.now(), remark);
+                    flowNote = ";差额 " + vanish + " 落[结算差异损失](杂费行,非现金)";
+                } else {
+                    event.pnlInflow(vanish.negate(), CashFlowCategory.SETTLE_DIFF_GAIN, LocalDateTime.now(), remark);
+                    flowNote = ";差额 " + vanish.negate() + " 落[结算差异多收](其他收入-平台外行,非现金)";
+                }
+                eventPublisher.publishEvent(event);
+            }
+        }
+        opLogService.record(operator, "结算差异复核收口", "settlement", id, null, note.trim() + flowNote);
+    }
+
+    private static BigDecimal nz(BigDecimal v) {
+        return v == null ? BigDecimal.ZERO : v;
     }
 
     /** 作废(仅待核对;已核销的钱和回填都落了,逆向属红冲连锁范畴,M3 后续票) */

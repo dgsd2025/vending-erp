@@ -223,13 +223,21 @@ class MoneyFoundationTest extends BaseIntegrationTest {
         assertTrue(resp.getBanner().contains("待核实"));
         assertEquals(3, resp.getOptions().size());
 
-        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, "测试员");
+        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, "测试员", "老板");
         MoneyDtos.SettleModeResp after = settleModeService.get();
         assertEquals(SettleModeService.MODE_PLATFORM, after.getMode());
         assertNull(after.getBanner(), "定型后不再显示横幅");
         assertEquals(SettleModeService.MODE_PLATFORM, settleModeService.currentMode());
 
-        assertThrows(BizException.class, () -> settleModeService.set("WECHAT_PAY", OP, "测试员"));
+        assertThrows(BizException.class, () -> settleModeService.set("WECHAT_PAY", OP, "测试员", "老板"));
+
+        // M3-9 P1-7:结算模式是全系统钱账口径总开关——非老板角色/无角色一律拒绝
+        BizException noBoss = assertThrows(BizException.class,
+                () -> settleModeService.set(SettleModeService.MODE_DIRECT, OP, "测试员", "员工"));
+        assertTrue(noBoss.getMessage().contains("限老板角色"), noBoss.getMessage());
+        assertThrows(BizException.class,
+                () -> settleModeService.set(SettleModeService.MODE_DIRECT, OP, "测试员", null));
+        assertEquals(SettleModeService.MODE_PLATFORM, settleModeService.currentMode(), "被拒后模式不变");
     }
 
     // ============================== ⑧ 虚拟账户不可手工收支 ==============================
@@ -306,5 +314,37 @@ class MoneyFoundationTest extends BaseIntegrationTest {
         MoneyDtos.PlSummaryRow claim = summary.stream()
                 .filter(r -> "其他收入-赔付".equals(r.getPlLine())).findFirst().orElseThrow(AssertionError::new);
         assertEquals(0, claim.getInflow().compareTo(new BigDecimal("45")));
+    }
+
+    // ============================== M3-9 非现金过账纪律 ==============================
+
+    @Test
+    @DisplayName("M3-9:非现金过账(account_id=NULL)只许白名单类别(成本调整/结算差异),不动任何账户余额;其他类别无账户被拒")
+    void cashlessPostingDiscipline() {
+        Long id = account("微信", "100");
+        // 白名单:成本调整——落流水但不挂账户
+        MoneyPostingEvent ok = new MoneyPostingEvent("成本调整单", 920L, OP);
+        ok.pnlOutflow(new BigDecimal("2.5"), CashFlowCategory.COST_ADJUST_FLOW,
+                LocalDateTime.now(), "已售部分Δ(非现金)");
+        publisher.publishEvent(ok);
+        CashFlow flow = cashFlowMapper.selectOne(new LambdaQueryWrapper<CashFlow>()
+                .eq(CashFlow::getRefDocType, "成本调整单").eq(CashFlow::getRefDocId, 920L));
+        assertNotNull(flow);
+        assertNull(flow.getAccountId(), "非现金行不属于任何账户");
+        assertEquals(PlLine.COST_ADJUST.getLabel(), flow.getPlLine(), "只进利润表行");
+        assertEquals(0, accountService.balanceOf(id).compareTo(new BigDecimal("100")),
+                "任何账户余额都不受非现金行影响");
+        // 利润表聚合口吃得到非现金行
+        String month = YearMonth.now().format(PERIOD);
+        MoneyDtos.PlSummaryRow adj = cashFlowQueryService.plMonthlySummary(month, month).stream()
+                .filter(r -> PlLine.COST_ADJUST.getLabel().equals(r.getPlLine()))
+                .findFirst().orElseThrow(AssertionError::new);
+        assertEquals(0, adj.getNet().compareTo(new BigDecimal("-2.5")));
+
+        // 非白名单类别不挂账户 → 拒绝(纪律:现金类流水必须有真实账户)
+        MoneyPostingEvent bad = new MoneyPostingEvent("支出单", 921L, OP);
+        bad.pnlOutflow(BigDecimal.ONE, CashFlowCategory.MISC, LocalDateTime.now(), "非法非现金");
+        BizException e = assertThrows(BizException.class, () -> publisher.publishEvent(bad));
+        assertTrue(e.getMessage().contains("必须挂真实账户"), e.getMessage());
     }
 }

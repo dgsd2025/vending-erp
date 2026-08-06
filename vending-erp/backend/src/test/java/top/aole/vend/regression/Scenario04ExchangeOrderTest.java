@@ -159,7 +159,7 @@ class Scenario04ExchangeOrderTest extends RegressionSupport {
         sale(m.getId(), p.getId(), "1", "99.0", "测试", DAY.atTime(13, 0));
 
         // 定型 PLATFORM(附录D)→ 录入平台结算单(区间=兑换活动当天)→ 平台账单凭证 → 确认
-        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, OPERATOR);
+        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, OPERATOR, "老板");
         MoneyDtos.AccountCreateReq accReq = new MoneyDtos.AccountCreateReq();
         accReq.setAccountName("微信-场景4-" + SEQ.incrementAndGet());
         accReq.setAccountType("微信");

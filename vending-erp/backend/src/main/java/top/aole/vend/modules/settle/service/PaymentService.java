@@ -111,6 +111,27 @@ public class PaymentService {
             throw new BizException(String.format(
                     "付款单[%s]没有转账凭证:请先上传转账截图(凭证强制,无凭证不能进入已付款,§9.1)", payment.getPayNo()));
         }
+        // 确认时重查结算单当前状态(M3-9 P0-1,先查后抢占——拒付时不留任何写痕):
+        // 建付款单后结算单可能已被红冲连锁作废/已核销——不在[待付款/差异挂起]一律拒付,
+        // 防止给已退货的采购付钱、把已作废单改"已完成"复活
+        if (payment.getSettleBillId() != null) {
+            SettleBill current = settleBillService.mustGet(payment.getSettleBillId());
+            if (!SettleBill.ST_PENDING_PAY.equals(current.getBillStatus())
+                    && !SettleBill.ST_DIFF.equals(current.getBillStatus())) {
+                throw new BizException(String.format(
+                        "结算单[%s]当前状态为[%s],不能再付款:已被红冲连锁作废/已核销的结算单不许复活,请作废本付款单[%s]",
+                        current.getBillNo(), current.getBillStatus(), payment.getPayNo()));
+            }
+        }
+        // 条件更新抢占(M3-9 P0-1,仿 SettlementService 待核对→核销中):
+        // 双开页面/双人并发确认同一张付款单,只允许一个通过——否则两笔流水双扣账户余额
+        int claimed = paymentMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Payment>()
+                .eq(Payment::getId, payId)
+                .eq(Payment::getPayStatus, Payment.ST_PENDING)
+                .set(Payment::getPayStatus, Payment.ST_CONFIRMING));
+        if (claimed != 1) {
+            throw new BizException(String.format("付款单[%s]已被他人处理(并发确认防双扣),请刷新查看", payment.getPayNo()));
+        }
 
         LocalDateTime now = LocalDateTime.now();
         payment.setPayTime(now);

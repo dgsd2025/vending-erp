@@ -23,6 +23,8 @@ import java.util.Set;
 public class Expense extends BaseEntity {
 
     public static final String STATUS_PENDING = "待确认";
+    /** 确认中(M3-9 P0-2 条件更新抢占过渡态:仅存在于确认事务内) */
+    public static final String STATUS_CONFIRMING = "确认中";
     public static final String STATUS_DONE = "已完成";
 
     public static final String CATEGORY_UTILITY = "电费";

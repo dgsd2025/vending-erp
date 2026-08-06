@@ -149,11 +149,12 @@ public class MoneyController {
         return R.ok(settleModeService.get());
     }
 
-    @ApiOperation("设置结算模式(核实真实交易后一键定型;op_log 留痕)")
+    @ApiOperation("设置结算模式(限老板角色 X-User-Role,M3-9 P1-7;核实真实交易后一键定型;op_log 留痕)")
     @PutMapping("/settle-mode")
     public R<MoneyDtos.SettleModeResp> setSettleMode(@Valid @RequestBody MoneyDtos.SettleModeReq req,
-                                                     @RequestHeader(value = Operators.HEADER, required = false) String op) {
-        settleModeService.set(req.getMode(), UID, Operators.resolve(op));
+                                                     @RequestHeader(value = Operators.HEADER, required = false) String op,
+                                                     @RequestHeader(value = "X-User-Role", required = false) String role) {
+        settleModeService.set(req.getMode(), UID, Operators.resolve(op), Operators.resolve(role));
         return R.ok(settleModeService.get());
     }
 }

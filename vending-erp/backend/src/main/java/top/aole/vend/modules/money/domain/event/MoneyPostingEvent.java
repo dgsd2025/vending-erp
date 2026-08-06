@@ -57,6 +57,25 @@ public class MoneyPostingEvent {
         return this;
     }
 
+    /**
+     * 加一条非现金收入行(M3-9 P1-4/P1-5:account_id=NULL,只进 pl_line 利润表聚合,
+     * 不动任何账户余额)。写手侧限白名单类别(成本调整/结算差异),其余拒绝。
+     */
+    public MoneyPostingEvent pnlInflow(BigDecimal amount, CashFlowCategory category,
+                                       LocalDateTime bizTime, String remark) {
+        lines.add(new Line(null, top.aole.vend.modules.money.domain.entity.CashFlow.DIR_IN,
+                amount, category, bizTime, remark));
+        return this;
+    }
+
+    /** 加一条非现金支出行(同 {@link #pnlInflow}) */
+    public MoneyPostingEvent pnlOutflow(BigDecimal amount, CashFlowCategory category,
+                                        LocalDateTime bizTime, String remark) {
+        lines.add(new Line(null, top.aole.vend.modules.money.domain.entity.CashFlow.DIR_OUT,
+                amount, category, bizTime, remark));
+        return this;
+    }
+
     /** 一条流水行(方向+金额+类别;pl_line 由类别推导) */
     @Getter
     public static class Line {

@@ -41,8 +41,12 @@ public enum CashFlowCategory {
     EQUIPMENT("设备购置", PlLine.MISC_EXPENSE),
     /** 损耗(盘亏/报损涉现金部分) */
     SHRINK_LOSS("损耗", PlLine.SHRINKAGE),
-    /** 成本调整(P0-1 已售部分进利润表调整行) */
+    /** 成本调整(P0-1 已售部分进利润表调整行;M3-9 P1-4:非现金过账,account_id=NULL) */
     COST_ADJUST_FLOW("成本调整", PlLine.COST_ADJUST),
+    /** 结算差异损失(M3-9 P1-5:差异收口核实为平台多扣/吞货,非现金,进杂费行) */
+    SETTLE_DIFF_LOSS("结算差异损失", PlLine.MISC_EXPENSE),
+    /** 结算差异多收(M3-9 P1-5:差异收口核实为多到账,非现金,进其他收入-平台外行) */
+    SETTLE_DIFF_GAIN("结算差异多收", PlLine.OTHER_INCOME_OFFLINE),
 
     // ---- 本金往来(不进利润表)----
     /** 付供应商货款(M3-2 付款单) */

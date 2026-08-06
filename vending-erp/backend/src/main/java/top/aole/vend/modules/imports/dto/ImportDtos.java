@@ -131,6 +131,8 @@ public final class ImportDtos {
         private int docsVoided;
         private int ledgerRemoved;
         private int snapshotRemoved;
+        /** 随回滚同事务作废的应付结算单数(M3-9 P0-3 应付链连锁) */
+        private int settleBillsVoided;
     }
 
     /** 重处理待绑定行结果 */

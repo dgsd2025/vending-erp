@@ -22,6 +22,8 @@ import java.time.LocalDateTime;
 public class Payment extends BaseEntity {
 
     public static final String ST_PENDING = "待付款";
+    /** 确认中(M3-9 P0-1 条件更新抢占的过渡态:仅存在于确认事务内,成功即落终态,失败随事务回滚) */
+    public static final String ST_CONFIRMING = "确认中";
     public static final String ST_PAID = "已付款";
     public static final String ST_SETTLED = "结算完成";
     public static final String ST_DIFF = "差异挂起";

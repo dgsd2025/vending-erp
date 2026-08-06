@@ -92,6 +92,12 @@ class ImportServiceTest {
     ImportBatchMapper importBatchMapper;
     @Autowired
     PriceLogMapper priceLogMapper;
+    @Autowired
+    top.aole.vend.modules.basedata.infrastructure.mapper.SupplierMapper supplierMapper;
+    @Autowired
+    top.aole.vend.modules.settle.mapper.SettleBillMapper settleBillMapper;
+    @Autowired
+    top.aole.vend.modules.settle.service.SettleBillService settleBillService;
 
     // ============================== 造数工具 ==============================
 
@@ -601,5 +607,80 @@ class ImportServiceTest {
         // ④ 存储目录外(修复前的落点 = 项目根)不许出现逃逸文件
         assertFalse(new File(storageRoot.getParentFile().getParentFile(), "evil.xlsx").exists(),
                 "存储目录之外绝不许出现上传文件(路径穿越)");
+    }
+
+    // ============================== M3-9 P0-3:整批回滚 × 应付链 ==============================
+
+    /** 造一个"已导入"采购批次 + 一张带供应商的采购入库单(确认后自动生成结算单),返回 [batchId, docId] */
+    private Long[] purchaseBatchWithSettleBill() {
+        ImportBatch batch = new ImportBatch();
+        batch.setBatchNo("TB" + IdUtil.fastSimpleUUID().substring(0, 10).toUpperCase());
+        batch.setFileName("期初采购.xlsx");
+        batch.setFileType(ImportBatch.TYPE_INITIAL_PURCHASE);
+        batch.setBatchStatus(ImportBatch.STATUS_IMPORTED);
+        importBatchMapper.insert(batch);
+
+        top.aole.vend.modules.basedata.domain.entity.Supplier supplier =
+                new top.aole.vend.modules.basedata.domain.entity.Supplier();
+        supplier.setSupplierCode("TS" + IdUtil.fastSimpleUUID().substring(0, 8).toUpperCase());
+        supplier.setSupplierName("回滚测试供应商");
+        supplier.setCoopStatus("合作中");
+        supplierMapper.insert(supplier);
+
+        Product p = product("回滚测试商品" + IdUtil.fastSimpleUUID().substring(0, 6), null, null);
+        DocCreateReq req = new DocCreateReq();
+        req.setDocType(DocType.PURCHASE_IN);
+        req.setBizDate(LocalDate.now());
+        req.setSupplierId(supplier.getId());
+        req.setImportBatchId(batch.getId());
+        DocItemReq item = new DocItemReq();
+        item.setProductId(p.getId());
+        item.setQty(new BigDecimal("100"));
+        item.setUnitPrice(new BigDecimal("3.5"));
+        req.setItems(java.util.Collections.singletonList(item));
+        Long docId = docService.createDoc(req, 9L);
+        docService.submit(docId, 9L);
+        docService.confirm(docId, 9L, false, null); // 触发结算单自动生成(待确认)
+        return new Long[]{batch.getId(), docId};
+    }
+
+    private top.aole.vend.modules.settle.domain.entity.SettleBill billOfSource(Long docId) {
+        return settleBillMapper.selectOne(
+                new LambdaQueryWrapper<top.aole.vend.modules.settle.domain.entity.SettleBill>()
+                        .eq(top.aole.vend.modules.settle.domain.entity.SettleBill::getSourceDocId, docId)
+                        .eq(top.aole.vend.modules.settle.domain.entity.SettleBill::getDirection, "正常")
+                        .last("LIMIT 1"));
+    }
+
+    @Test
+    void rollback_purchaseBatch_voidsPendingSettleBill() {
+        // 分支1(P0-3):结算单仅[待确认]且无付款 → 回滚放行,同事务作废结算单
+        Long[] ids = purchaseBatchWithSettleBill();
+        top.aole.vend.modules.settle.domain.entity.SettleBill bill = billOfSource(ids[1]);
+        assertNotNull(bill, "采购确认自动生成了结算单(应付链存在)");
+        assertEquals("待确认", bill.getBillStatus());
+
+        ImportDtos.RollbackResp resp = importService.rollback(ids[0], OP);
+        assertTrue(resp.isSuccess(), "待确认无付款 → 允许回滚:" + resp.getBlockers());
+        assertEquals(1, resp.getSettleBillsVoided(), "应付链连锁:结算单随回滚作废");
+        assertEquals("已作废", settleBillMapper.selectById(bill.getId()).getBillStatus(),
+                "结算单不再悬空存活(悬空=可为不存在的货付钱)");
+        assertEquals(DocStatus.VOID, docHeadMapper.selectById(ids[1]).getDocStatus());
+    }
+
+    @Test
+    void rollback_purchaseBatch_blockedWhenBillEnteredPayableFlow() {
+        // 分支2(P0-3):结算单已进应付流程(老板复核→待付款,更别说已付款)→ 拒绝回滚,指引红冲连锁
+        Long[] ids = purchaseBatchWithSettleBill();
+        top.aole.vend.modules.settle.domain.entity.SettleBill bill = billOfSource(ids[1]);
+        settleBillService.confirm(bill.getId(), null, 9L, OP, "老板"); // 待确认 → 待付款
+
+        ImportDtos.RollbackResp resp = importService.rollback(ids[0], OP);
+        assertFalse(resp.isSuccess(), "已进应付流程不许整批回滚");
+        assertTrue(resp.getBlockers().stream().anyMatch(b -> b.contains("红冲")),
+                "blocker 指引走红冲连锁(会正确处理应付红字):" + resp.getBlockers());
+        assertEquals("待付款", settleBillMapper.selectById(bill.getId()).getBillStatus(), "结算单原样");
+        assertEquals(ImportBatch.STATUS_IMPORTED, importBatchMapper.selectById(ids[0]).getBatchStatus(),
+                "批次仍是已导入(没被半回滚)");
     }
 }
