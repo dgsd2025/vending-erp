@@ -20,10 +20,7 @@ const router = createRouter({
     { path: '/suppliers', name: 'suppliers', meta: { title: '供应商往来' }, component: () => import('@/views/Suppliers.vue') },
     { path: '/assets', name: 'assets', meta: { title: '资产家底' }, component: () => import('@/views/Assets.vue') },
     { path: '/staff/:name', name: 'staff-detail', meta: { title: '员工详情' }, component: () => import('@/views/StaffDetail.vue') },
-    // ⚠️ M3-4 临时 dev 验证台(生产构建不注册):三组件在 p7 装配(M3-7)前的真浏览器验证入口,装配后删除
-    ...(import.meta.env.DEV
-      ? [{ path: '/money-lab', name: 'money-lab', meta: { title: 'M3-4 验证台(dev)' }, component: () => import('@/components/money/MoneyLabDev.vue') }]
-      : []),
+    { path: '/money', name: 'money', meta: { title: '资金与对账' }, component: () => import('@/views/Money.vue') },
   ],
 })
 

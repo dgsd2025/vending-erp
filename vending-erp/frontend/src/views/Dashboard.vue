@@ -7,6 +7,9 @@ import { pageAliasPending } from '@/api/basedata'
 import { taskApi, type TodayViewResp } from '@/api/task'
 import { clearanceAlerts, machineSuggestions, purchaseSuggestions } from '@/api/replenish'
 import { listTickets } from '@/api/prekit'
+import { pageFlows } from '@/api/money'
+import { settlementOverview } from '@/api/settlement'
+import { supplierOverview } from '@/api/settle'
 import { useAppStore } from '@/stores/app'
 
 /**
@@ -125,6 +128,28 @@ const taskChip = (s: string, dt?: string | null) =>
 const today = new Date()
 const weekday = ['日', '一', '二', '三', '四', '五', '六'][today.getDay()]
 const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
+
+// M3-7 点亮:钱账卡真数(今日流水笔数 / 待结算余额或 UNSET 横幅 / 逾期应付黄灯),失败不拖累主加载
+const moneyMode = ref<string | null>(null)
+const moneyPending = ref<number | null>(null)
+const todayFlowCount = ref<number | null>(null)
+const overduePayable = ref(0)
+onMounted(async () => {
+  try {
+    const period = todayStr.slice(0, 7)
+    const [flows, ov, sup] = await Promise.all([
+      pageFlows({ current: 1, size: 200, fromPeriod: period, toPeriod: period }),
+      settlementOverview(),
+      supplierOverview(),
+    ])
+    todayFlowCount.value = flows.records.filter((f) => (f.bizTime ?? '').slice(0, 10) === todayStr).length
+    moneyMode.value = ov.mode
+    moneyPending.value = ov.mode === 'PLATFORM' ? Number(ov.pendingBalance ?? 0) : null
+    overduePayable.value = sup.filter((s) => s.overdue).length
+  } catch {
+    todayFlowCount.value = null // 接口不可用 → 卡退化显示「—」,不误报
+  }
+})
 </script>
 
 <template>
@@ -232,10 +257,21 @@ const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart
         <span class="mini">(R,S) 公式算数字 · AI 讲人话 · 配货单 pre-kit</span>
         <div class="human">人话:{{ replenishPending == null ? '建议数暂取不到,去补货页看' : replenishPending === 0 ? '货道和仓库都够撑,今天不用补' : `有 ${replenishPending} 条建议等你勾选,点卡去补货页处理` }}。</div>
       </div>
-      <div class="ledger-card stat milestone">
-        <div class="lb">💰 钱账 · 待办</div>
-        <div class="vv num" style="color: #b9b2a0">里程碑 3</div>
-        <span class="mini">应付逾期 / 结算核对 / 业财单据链红灯,先核实结算模式</span>
+      <!-- M3-7 点亮:钱账卡真数(今日流水 / 待结算或 UNSET / 逾期应付黄灯),点卡进资金与对账页 -->
+      <div class="ledger-card stat" style="cursor: pointer" data-block="money-card" @click="router.push('/money')">
+        <div class="lb">
+          💰 钱账 · 资金与对账
+          <span v-if="overduePayable" class="chip c-amber">🟡 应付逾期 {{ overduePayable }} 家</span>
+        </div>
+        <div class="vv num">
+          {{ todayFlowCount == null ? '—' : todayFlowCount }}
+          <span style="font-size: 14px; color: var(--ink2)">笔今日流水</span>
+        </div>
+        <span class="mini" v-if="moneyMode === 'UNSET'" style="color: var(--amber)">⚠️ 结算模式待核实 —— 先定型再谈待结算</span>
+        <span class="mini" v-else-if="moneyMode === 'PLATFORM'">平台待结算(在途)¥{{ moneyPending == null ? '—' : moneyPending.toLocaleString('zh-CN', { minimumFractionDigits: 2 }) }}</span>
+        <span class="mini" v-else-if="moneyMode === 'DIRECT'">微信/支付宝直连 · 到账核对走月度钱盘</span>
+        <span class="mini" v-else>今日流水 / 待结算数据暂取不到</span>
+        <div class="human">人话:{{ overduePayable ? `有 ${overduePayable} 家供应商货款逾期未付,先去处理` : '每笔钱都有流水可追,点卡进资金与对账页' }}。</div>
       </div>
     </div>
 
