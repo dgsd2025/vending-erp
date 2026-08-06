@@ -26,6 +26,7 @@ import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
@@ -67,6 +68,8 @@ public class SettlementService {
     private final SettlementQueryMapper queryMapper;
     private final SettleModeService settleModeService;
     private final AccountMapper accountMapper;
+    /** M3-9 七律修复:红冲逆向需按本单流水净额整体反冲 */
+    private final top.aole.vend.modules.money.mapper.CashFlowMapper cashFlowMapper;
     private final AttachmentService attachmentService;
     private final PeriodLockService periodLockService;
     private final OpLogService opLogService;
@@ -338,19 +341,147 @@ public class SettlementService {
         return v == null ? BigDecimal.ZERO : v;
     }
 
-    /** 作废(仅待核对;已核销的钱和回填都落了,逆向属红冲连锁范畴,M3 后续票) */
+    /** 作废(仅待核对;已核销单的逆向走 {@link #redFlush}——带回填与流水一起退) */
     @Transactional(rollbackFor = Exception.class)
     public void voidBill(Long id, Long userId, String operator) {
         Settlement s = mustGet(id);
         if (!Settlement.ST_PENDING.equals(s.getStlStatus())) {
             throw new BizException(String.format(
-                    "单据[%s]状态为[%s],仅[待核对]可作废;已核销单的逆向要走红冲连锁(带回填与流水一起退)",
+                    "单据[%s]状态为[%s],仅[待核对]可作废;已核销单的逆向走「红冲逆向」(退回填+反向流水+回待核对)",
                     s.getStmtNo(), s.getStlStatus()));
         }
         s.setStlStatus(Settlement.ST_VOID);
         s.setUpdateUser(userId);
         settlementMapper.updateById(s);
         opLogService.record(operator, "作废结算单", "settlement", id, s.getStmtNo(), null);
+    }
+
+    // ============================== 已核销单红冲逆向(M3-9 七律修复 P1-1c,原 TODO 兑现) ==============================
+
+    /**
+     * 已核销结算单红冲式逆向(老板守卫 + 备注强制,历史不改写):
+     * PLATFORM[已核销] → ① 退回填(归属本单的 sale_record.settlement_id 清空,重新回待结算)
+     *                    ② 反向流水:按本单流水(账户,类别)净额整体反冲(货款结算收→支/手续费支→收;
+     *                       含差异收口落的非现金行),账户余额按原路退回
+     *                    ③ 状态回[待核对],清确认快照(可改数重录/重新核销);
+     * DIRECT[已核对] → 核对单没动钱没回填,只回[待核对]留痕。
+     * 条件更新抢占防双红冲(双击会把反向流水落两遍)。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public SettlementDtos.RedFlushResult redFlush(Long id, String note, String role, Long userId, String operator) {
+        periodLockService.assertBossRole(role, "已核销结算单红冲逆向");
+        if (note == null || note.trim().isEmpty()) {
+            throw new BizException("红冲逆向必须填写原因备注(为什么录错了/哪里错了,留痕)");
+        }
+        Settlement s = mustGet(id);
+        boolean platform = SettleModeService.MODE_PLATFORM.equals(s.getModeSnap());
+        String expected = platform ? Settlement.ST_SETTLED : Settlement.ST_CHECKED;
+        if (!expected.equals(s.getStlStatus())) {
+            throw new BizException(String.format(
+                    "单据[%s]状态为[%s],仅[%s]可红冲逆向;差异挂起请先「复核收口」或联系管理员",
+                    s.getStmtNo(), s.getStlStatus(), expected));
+        }
+        // 条件更新抢占:已核销/已核对 → 待核对(并发双红冲只允许一个通过)
+        String flushNote = String.format("%s红冲逆向(%s):%s",
+                (s.getDiffNote() == null || s.getDiffNote().isEmpty()) ? "" : s.getDiffNote() + " → ",
+                LocalDate.now(), note.trim());
+        int claimed = settlementMapper.update(null, new LambdaUpdateWrapper<Settlement>()
+                .eq(Settlement::getId, id)
+                .eq(Settlement::getStlStatus, expected)
+                .set(Settlement::getStlStatus, Settlement.ST_PENDING)
+                .set(Settlement::getConfirmBy, null)
+                .set(Settlement::getConfirmAt, null)
+                .set(Settlement::getSystemAmount, BigDecimal.ZERO)
+                .set(Settlement::getDiffSales, BigDecimal.ZERO)
+                .set(Settlement::getDiffArrival, BigDecimal.ZERO)
+                .set(Settlement::getBookPeriod, null)
+                .set(Settlement::getDiffNote, flushNote.length() > 490 ? flushNote.substring(0, 490) : flushNote)
+                .set(Settlement::getUpdateUser, userId));
+        if (claimed != 1) {
+            throw new BizException(String.format("单据[%s]已被他人处理(并发防双红冲),请刷新查看", s.getStmtNo()));
+        }
+
+        int unfilled = 0;
+        int reverseLines = 0;
+        if (platform) {
+            // ① 退回填:归属本单的销售行重新回「待结算」
+            unfilled = queryMapper.unbackfill(id);
+            // ② 反向流水:按(账户,类别)净额整体反冲(重录-红冲多轮也只反冲净额,不重复退钱)
+            Map<String, BigDecimal> net = new LinkedHashMap<>();
+            Map<String, Object[]> keyMeta = new HashMap<>();
+            for (top.aole.vend.modules.money.domain.entity.CashFlow f : cashFlowMapper.selectList(
+                    new LambdaQueryWrapper<top.aole.vend.modules.money.domain.entity.CashFlow>()
+                            .eq(top.aole.vend.modules.money.domain.entity.CashFlow::getRefDocType, REF_DOC_TYPE)
+                            .eq(top.aole.vend.modules.money.domain.entity.CashFlow::getRefDocId, id))) {
+                String key = f.getAccountId() + "|" + f.getCategory();
+                BigDecimal signed = top.aole.vend.modules.money.domain.entity.CashFlow.DIR_IN.equals(f.getDirection())
+                        ? f.getAmount() : f.getAmount().negate();
+                net.merge(key, signed, BigDecimal::add);
+                keyMeta.put(key, new Object[]{f.getAccountId(), CashFlowCategory.ofLabel(f.getCategory())});
+            }
+            MoneyPostingEvent event = new MoneyPostingEvent(REF_DOC_TYPE, id, userId);
+            LocalDateTime now = LocalDateTime.now();
+            for (Map.Entry<String, BigDecimal> e : net.entrySet()) {
+                BigDecimal v = e.getValue();
+                if (v.compareTo(BigDecimal.ZERO) == 0) {
+                    continue;
+                }
+                Object[] meta = keyMeta.get(e.getKey());
+                Long accountId = (Long) meta[0];
+                CashFlowCategory category = (CashFlowCategory) meta[1];
+                String remark = String.format("红冲逆向 %s(%s):%s", s.getStmtNo(), category.getLabel(), note.trim());
+                if (accountId == null) {
+                    // 非现金行(差异收口留痕)按净额反向
+                    if (v.compareTo(BigDecimal.ZERO) > 0) {
+                        event.pnlOutflow(v, category, now, remark);
+                    } else {
+                        event.pnlInflow(v.negate(), category, now, remark);
+                    }
+                } else if (v.compareTo(BigDecimal.ZERO) > 0) {
+                    event.outflow(accountId, v, category, now, remark);
+                } else {
+                    event.inflow(accountId, v.negate(), category, now, remark);
+                }
+                reverseLines++;
+            }
+            if (reverseLines > 0) {
+                eventPublisher.publishEvent(event);
+            }
+        }
+        opLogService.record(operator, "已核销结算单红冲逆向", "settlement", id, s.getStmtNo(), String.format(
+                "退回填 %d 笔销售回待结算;反向流水 %d 条;状态回待核对。原因:%s", unfilled, reverseLines, note.trim()));
+
+        SettlementDtos.RedFlushResult r = new SettlementDtos.RedFlushResult();
+        r.setBillId(id);
+        r.setUnbackfillCount(unfilled);
+        r.setReverseFlowCount(reverseLines);
+        r.setStlStatus(Settlement.ST_PENDING);
+        return r;
+    }
+
+    // ============================== 在途货款 aging(M3-9 七律修复 P1-5:驾驶舱红灯数据口) ==============================
+
+    /** 超期未结算阈值(天):PLATFORM 下最老待结算销售挂账超过即红灯(月结平台一个整月+缓冲) */
+    public static final int PENDING_AGING_THRESHOLD_DAYS = 35;
+
+    /** 待结算最老账龄(只读):PLATFORM 才有「在途」概念;DIRECT/UNSET 恒不亮灯 */
+    public SettlementDtos.PendingAgingResp pendingAging() {
+        SettlementDtos.PendingAgingResp resp = new SettlementDtos.PendingAgingResp();
+        String mode = settleModeService.currentMode();
+        resp.setMode(mode);
+        resp.setThresholdDays(PENDING_AGING_THRESHOLD_DAYS);
+        if (SettleModeService.MODE_PLATFORM.equals(mode)) {
+            resp.setPendingBalance(queryMapper.pendingBalance());
+            resp.setPendingCount(queryMapper.pendingCount());
+            LocalDateTime oldest = queryMapper.pendingOldest();
+            resp.setOldest(oldest);
+            if (oldest != null) {
+                int days = (int) java.time.temporal.ChronoUnit.DAYS.between(oldest.toLocalDate(), LocalDate.now());
+                resp.setOldestDays(days);
+                resp.setOverdue(days > PENDING_AGING_THRESHOLD_DAYS);
+            }
+        }
+        return resp;
     }
 
     // ============================== 列表 ==============================

@@ -102,6 +102,30 @@ public class PayableService {
         return row;
     }
 
+    /**
+     * 应付逾期 aging(M3-9 七律修复 P1-5:驾驶舱红灯②只读数据口)。
+     * 口径与供应商卡黄灯同源(earliestUnpaidDueDate 过期即逾期),只聚合不另抄公式。
+     */
+    public SettleDtos.PayableAgingResp payableAging() {
+        SettleDtos.PayableAgingResp resp = new SettleDtos.PayableAgingResp();
+        for (SettleDtos.SupplierOverviewRow row : overview()) {
+            if (!row.isOverdue()) {
+                continue;
+            }
+            SettleDtos.PayableAgingRow r = new SettleDtos.PayableAgingRow();
+            r.setSupplierId(row.getSupplierId());
+            r.setSupplierName(row.getSupplierName());
+            r.setBalance(row.getBalance());
+            r.setOverdueDays(row.getOverdueDays());
+            resp.getRows().add(r);
+            resp.setOverdueCount(resp.getOverdueCount() + 1);
+            if (row.getOverdueDays() != null && row.getOverdueDays() > resp.getMaxOverdueDays()) {
+                resp.setMaxOverdueDays(row.getOverdueDays());
+            }
+        }
+        return resp;
+    }
+
     // ============================== 对账单(期初+明细+期末) ==============================
 
     public SettleDtos.StatementResp statement(Long supplierId) {

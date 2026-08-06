@@ -26,6 +26,12 @@ public class Expense extends BaseEntity {
     /** 确认中(M3-9 P0-2 条件更新抢占过渡态:仅存在于确认事务内) */
     public static final String STATUS_CONFIRMING = "确认中";
     public static final String STATUS_DONE = "已完成";
+    /** 已作废(M3-9 七律修复:仅待确认可作废——钱没动) */
+    public static final String STATUS_VOID = "已作废";
+    /** 已红冲(已确认的唯一逆向:被负额红冲行承接) */
+    public static final String STATUS_RED_FLUSHED = "已红冲";
+    /** 红冲行自身状态(负额,反向流水已落) */
+    public static final String STATUS_RED = "红冲";
 
     public static final String CATEGORY_UTILITY = "电费";
     public static final String CATEGORY_REPAIR = "维修";
@@ -62,4 +68,7 @@ public class Expense extends BaseEntity {
     private String bookPeriod;
 
     private String remark;
+
+    /** 红冲指向的原支出单ID(本行=负额红冲行;原单被红冲后 exp_status=已红冲) */
+    private Long redFlushOf;
 }

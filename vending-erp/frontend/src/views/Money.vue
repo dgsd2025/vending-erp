@@ -13,6 +13,7 @@ import {
   type FlowRow,
   type PageResult,
 } from '@/api/money'
+import type { BillRow as SettlementBillRow, SettlementOverview } from '@/api/settlement'
 
 /**
  * 资金与对账页(M3-7,对照 mockup p7):钱在哪、进了多少、出了多少、平台吃掉多少——一页看清。
@@ -67,6 +68,72 @@ async function loadFee() {
     feeThisMonth.value = null // 取不到不误报 0
   }
 }
+
+// ============ ② 结算流程条(M3-9 七律修复:按真实单据状态点亮,不再写死) ============
+
+const settleOverview = ref<SettlementOverview | null>(null)
+const settleBills = ref<SettlementBillRow[]>([])
+
+/** SettlementPanel 每次加载/操作后回传真实数据 → 流程条重算 */
+function onSettlementChanged(payload: { overview: SettlementOverview | null; bills: SettlementBillRow[] }) {
+  settleOverview.value = payload.overview
+  settleBills.value = payload.bills
+}
+
+interface FlowStep {
+  label: string
+  mini: string
+  state: '' | 'done' | 'cur'
+}
+
+/**
+ * 真实流程(实现=手工录入,不是"系统预生成"):
+ * ①录结算单 → ②传平台账单凭证 → ③确认核销(两差自动算) → ④差异复核收口 → ⑤完成。
+ * 状态推导:取最新一张进行中单(待核对/差异挂起);没有进行中单时,近期有已核销=全部 done。
+ */
+const flowSteps = computed<FlowStep[]>(() => {
+  const mode = settleOverview.value?.mode
+  if (mode !== 'PLATFORM' && mode !== 'DIRECT') return []
+  const platform = mode === 'PLATFORM'
+  const steps: FlowStep[] = platform
+    ? [
+        { label: '① 录平台结算单', mini: '平台打款后手工录:区间+平台数+到账数', state: '' },
+        { label: '② 传平台账单凭证', mini: '必传 · 无凭证不能核销', state: '' },
+        { label: '③ 确认核销', mini: '漏单差①/扣款差② 自动算', state: '' },
+        { label: '④ 差异复核收口', mini: '超阈值挂起 · 说明必填', state: '' },
+        { label: '⑤ 完成', mini: '写流水 · 清待结算', state: '' },
+      ]
+    : [
+        { label: '① 录商户账单核对单', mini: '按月手工录:区间+商户账单额', state: '' },
+        { label: '② 确认对差', mini: '只对漏单差 · 不动钱', state: '' },
+        { label: '③ 差异收口', mini: '超阈值挂起 · 说明必填', state: '' },
+      ]
+  const active = settleBills.value.find((b) => b.stlStatus === '待核对' || b.stlStatus === '差异挂起')
+  const doneOne = settleBills.value.some((b) => b.stlStatus === '已核销' || b.stlStatus === '已核对')
+  /** 点亮到第 n 步 done、第 cur 步 cur */
+  const light = (doneCount: number, cur: number | null) => {
+    steps.forEach((s, i) => {
+      s.state = i < doneCount ? 'done' : i === cur ? 'cur' : ''
+    })
+  }
+  if (!active) {
+    if (doneOne) light(steps.length, null) // 最近周期已走完
+    else light(0, 0) // 还没录过单 → 从第①步开始
+    return steps
+  }
+  if (active.stlStatus === '差异挂起') {
+    light(platform ? 3 : 2, platform ? 3 : 2)
+    return steps
+  }
+  // 待核对
+  if (platform) {
+    if (!active.attachmentCount) light(1, 1) // 已录单,凭证未传
+    else light(2, 2) // 凭证已传,待确认核销
+  } else {
+    light(1, 1)
+  }
+  return steps
+})
 
 // ============ ③ 流水账(只读 + 分页筛选) ============
 
@@ -175,22 +242,20 @@ onMounted(() => {
       </p>
     </div>
 
-    <!-- ② 平台结算对账(⚡任务来源 + 五步流程条 + SettlementPanel 三态) -->
+    <!-- ② 平台结算对账(⚡任务来源 + 流程条按真实单据状态点亮 + SettlementPanel 三态) -->
     <div class="ledger-card" data-block="settlement">
       <h3>
         🏦 平台结算对账
-        <span class="hint">⚡ 任务:每月 2 日自动生成「结算核对」派给财务/老板,逾期在途货款红灯</span>
+        <span class="hint">⚡ 任务:每月 2 日自动生成「平台结算核对」派给财务(系统校验=当月已核销/已核对),逾期红灯;在途货款超 35 天驾驶舱亮灯</span>
       </h3>
-      <div class="flow-bar">
-        <div class="flow-step done">① 系统预生成结算单<span class="mini">按区间汇总系统销售额</span></div>
-        <div class="flow-step done">② 去厂家后台下载账单<span class="mini">账单信息 / 销售分成页</span></div>
-        <div class="flow-step cur">③ 录平台数+到账数<span class="mini">传平台账单凭证(必传)</span></div>
-        <div class="flow-step">④ 系统对差异<span class="mini">漏单差①/扣款差② 自动算</span></div>
-        <div class="flow-step">⑤ 确认核销<span class="mini">写流水 · 清待结算</span></div>
+      <div v-if="flowSteps.length" class="flow-bar" data-block="settle-flow-bar">
+        <div v-for="(s, i) in flowSteps" :key="i" class="flow-step" :class="s.state">
+          {{ s.label }}<span class="mini">{{ s.mini }}</span>
+        </div>
       </div>
-      <SettlementPanel />
+      <SettlementPanel @changed="onSettlementChanged" />
       <p class="mini" style="margin-top: 8px">
-        💡 业财一体规矩:系统按周期<b>预生成</b>结算单 → 钱到账录实际数 + <b>必传平台账单凭证</b> → 核对通过自动核销;两差(漏单/扣款)红绿灯,超阈值挂差异复核。
+        💡 业财一体规矩:平台打款后<b>手工录入</b>结算单(区间+平台数+到账数)→ <b>必传平台账单凭证</b> → 确认核销自动对两差、回填在途货款;两差(漏单/扣款)红绿灯,超阈值挂差异复核。录错的已核销单走「红冲逆向」整体退回。
       </p>
     </div>
 

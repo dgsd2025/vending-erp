@@ -49,6 +49,10 @@ public interface SettlementQueryMapper {
     int backfill(@Param("sid") Long sid,
                  @Param("start") LocalDateTime start, @Param("endEx") LocalDateTime endEx);
 
+    /** 退回填(M3-9 七律修复:已核销单红冲逆向)——只退归属本单的行,销售重新回「待结算」 */
+    @Update("UPDATE yc_vend_sale_record SET settlement_id=NULL WHERE settlement_id=#{sid}")
+    int unbackfill(@Param("sid") Long sid);
+
     // ============ DIRECT:商户账单核对(不看 settlement_id,全区间对总) ============
 
     /** 区间内系统销售额(直连核对口径:同三口径,但不筛回填状态——直连没有"在途"概念) */

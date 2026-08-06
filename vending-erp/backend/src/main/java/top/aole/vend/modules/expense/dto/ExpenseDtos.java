@@ -50,6 +50,8 @@ public final class ExpenseDtos {
         private LocalDateTime createTime;
         /** 已传凭证数(确认门禁提示用) */
         private Long attachmentCount;
+        /** 红冲指向的原支出单ID(非空=本行是负额红冲行) */
+        private Long redFlushOf;
     }
 
     // ============ 设备台账 ============
@@ -80,6 +82,12 @@ public final class ExpenseDtos {
     }
 
     // ============ 线下收入复合单(P2-13) ============
+
+    /** 逆向出口通用入参:备注强制留痕(作废/红冲/冲销) */
+    @Data
+    public static class NoteReq {
+        private String note;
+    }
 
     /** 一次录入 → 同事务三件套:sale_record(线下补录,不入待结算)+ cash_flow(其他收入-平台外)+ 豁免标记 */
     @Data
@@ -119,5 +127,9 @@ public final class ExpenseDtos {
         private BigDecimal qty;
         private BigDecimal amount;
         private LocalDateTime bizTime;
+        /** 本行是冲销行(OFFLINE-RF- 负额) */
+        private Boolean reversal;
+        /** 本行(原复合单)已被冲销 */
+        private Boolean reversed;
     }
 }

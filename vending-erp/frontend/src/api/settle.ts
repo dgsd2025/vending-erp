@@ -70,6 +70,8 @@ export interface PaymentRow {
   payStatus: string
   payTime?: string | null
   remark?: string | null
+  /** 非空=本行是负额红冲行(指向原付款单) */
+  redFlushOf?: number | null
   createTime?: string | null
 }
 
@@ -159,6 +161,27 @@ export function confirmPayment(id: number): Promise<PaymentRow> {
 
 export function resolvePaymentDiff(id: number, note: string): Promise<PaymentRow> {
   return request.post(`/v1/settle/payments/${id}/resolve-diff`, { note }, opHeaders())
+}
+
+/** 作废付款单(M3-9 逆向出口:仅待付款,钱没动;备注强制留痕) */
+export function voidPayment(id: number, note: string): Promise<void> {
+  return request.post(`/v1/settle/payments/${id}/void`, { note }, opHeaders())
+}
+
+/** 红冲付款单(钱已动的唯一逆向):负额红冲行+退款流水+结算单回待付款;备注强制 */
+export function redFlushPayment(id: number, note: string): Promise<number> {
+  return request.post(`/v1/settle/payments/${id}/red-flush`, { note }, opHeaders())
+}
+
+/** 应付逾期 aging(驾驶舱红灯只读数据口) */
+export interface PayableAgingResp {
+  overdueCount: number
+  maxOverdueDays: number
+  rows: { supplierId: number; supplierName: string; balance: number | string; overdueDays: number | null }[]
+}
+
+export function payableAging(): Promise<PayableAgingResp> {
+  return request.get('/v1/settle/payable-aging')
 }
 
 // ---------- 抵扣确认单 ----------

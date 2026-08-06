@@ -147,4 +147,33 @@ public final class SettlementDtos {
         /** 净对冲结果 = 补贴确认总额 − 兑换成本(≥0=补贴够本,<0=兑换在亏) */
         private BigDecimal net;
     }
+
+    // ============ M3-9 七律修复:红冲逆向 + 在途 aging ============
+
+    /** 已核销单红冲逆向结果 */
+    @Data
+    public static class RedFlushResult {
+        private Long billId;
+        /** 退回填笔数(销售重新回待结算) */
+        private int unbackfillCount;
+        /** 反向流水条数(按账户×类别净额) */
+        private int reverseFlowCount;
+        /** 逆向后状态(待核对) */
+        private String stlStatus;
+    }
+
+    /** 待结算最老账龄(驾驶舱「超期未结算」红灯只读数据口) */
+    @Data
+    public static class PendingAgingResp {
+        private String mode;
+        private BigDecimal pendingBalance;
+        private Long pendingCount;
+        /** 最早一笔待回填销售时间 */
+        private java.time.LocalDateTime oldest;
+        /** 挂账天数(无在途=null) */
+        private Integer oldestDays;
+        /** 超阈值红灯 */
+        private boolean overdue;
+        private int thresholdDays;
+    }
 }

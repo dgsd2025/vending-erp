@@ -122,6 +122,29 @@ public class SettleController {
         return R.ok(paymentService.resolveDiff(id, req.getNote(), UID, Operators.resolve(op)));
     }
 
+    @ApiOperation("作废付款单(M3-9 七律修复:仅待付款——钱没动;备注强制留痕)")
+    @PostMapping("/payments/{id}/void")
+    public R<Void> voidPayment(@PathVariable Long id,
+                               @Valid @RequestBody SettleDtos.DiffResolveReq req,
+                               @RequestHeader(value = Operators.HEADER, required = false) String op) {
+        paymentService.voidPayment(id, req.getNote(), UID, Operators.resolve(op));
+        return R.ok(null);
+    }
+
+    @ApiOperation("红冲付款单(钱已动的唯一逆向):负额红冲行+退款流水+结算单回待付款;备注强制留痕")
+    @PostMapping("/payments/{id}/red-flush")
+    public R<Long> redFlushPayment(@PathVariable Long id,
+                                   @Valid @RequestBody SettleDtos.DiffResolveReq req,
+                                   @RequestHeader(value = Operators.HEADER, required = false) String op) {
+        return R.ok(paymentService.redFlush(id, req.getNote(), UID, Operators.resolve(op)));
+    }
+
+    @ApiOperation("应付逾期 aging(M3-9 七律修复:驾驶舱红灯只读数据口——逾期家数/最长天数/明细)")
+    @GetMapping("/payable-aging")
+    public R<SettleDtos.PayableAgingResp> payableAging() {
+        return R.ok(payableService.payableAging());
+    }
+
     // ============================== 抵扣确认单 ==============================
 
     @ApiOperation("抵扣确认单列表(status=待抵扣 即结算单确认弹窗的勾选源)")

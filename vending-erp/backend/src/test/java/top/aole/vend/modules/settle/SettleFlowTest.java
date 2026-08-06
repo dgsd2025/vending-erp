@@ -590,4 +590,91 @@ class SettleFlowTest extends BaseIntegrationTest {
                 () -> payment(s.getId(), a.getId(), "150", bill.getId()));
         assertTrue(e.getMessage().contains("待付款/差异挂起"), e.getMessage());
     }
+
+    @Test
+    @DisplayName("15·M3-9七律修复:付款单作废——仅待付款可作废(备注强制);已付款拒作废指路红冲;作废后不能再确认")
+    void voidPendingPayment() {
+        Supplier s = supplier("作废供应商", "现结", 0, "0");
+        Account a = account("作废", "5000");
+        Long payId = payment(s.getId(), a.getId(), "100", null);
+
+        // 备注强制
+        BizException e0 = assertThrows(BizException.class,
+                () -> paymentService.voidPayment(payId, " ", OP, OPERATOR));
+        assertTrue(e0.getMessage().contains("备注"), e0.getMessage());
+
+        paymentService.voidPayment(payId, "录错供应商,重录", OP, OPERATOR);
+        assertEquals(Payment.ST_VOID, paymentMapper.selectById(payId).getPayStatus(), "待付款→已作废(留痕不删)");
+
+        // 作废后不能再确认(不再永远躺在列表更不能复活)
+        voucher(payId);
+        BizException e1 = assertThrows(BizException.class, () -> paymentService.confirm(payId, OP, OPERATOR));
+        assertTrue(e1.getMessage().contains("仅[待付款]"), e1.getMessage());
+
+        // 已付款(钱已动)拒作废,指路红冲
+        Long paidId = payment(s.getId(), a.getId(), "50", null);
+        voucher(paidId);
+        paymentService.confirm(paidId, OP, OPERATOR);
+        BizException e2 = assertThrows(BizException.class,
+                () -> paymentService.voidPayment(paidId, "想删掉", OP, OPERATOR));
+        assertTrue(e2.getMessage().contains("红冲"), "钱已动的唯一逆向=红冲:" + e2.getMessage());
+    }
+
+    @Test
+    @DisplayName("16·M3-9七律修复:付款红冲全链——负额红冲行+退款流水回账户+应付余额恢复+结算单回待付款;双红冲被拒")
+    void redFlushPaidPayment() {
+        Supplier s = supplier("红冲付款供应商", "现结", 0, "0");
+        Product p = product("红冲付款商品");
+        Account a = account("红冲付款", "5000");
+        Long docId = purchase(s.getId(), p.getId(), "100", "3.5", LocalDate.now()); // 350
+        SettleBill bill = billOf(docId);
+        settleBillService.confirm(bill.getId(), null, OP, OPERATOR, ROLE_BOSS);
+        Long payId = payment(s.getId(), a.getId(), "350", bill.getId());
+        voucher(payId);
+        paymentService.confirm(payId, OP, OPERATOR); // 自动核销闭环
+        assertEquals(SettleBill.ST_DONE, billMapper.selectById(bill.getId()).getBillStatus());
+        assertEquals(0, accountService.balanceOf(a.getId()).compareTo(new BigDecimal("4650")), "5000−350");
+        assertEquals(0, overview(s.getId()).getBalance().compareTo(BigDecimal.ZERO), "应付已清");
+
+        // 备注强制
+        BizException e0 = assertThrows(BizException.class,
+                () -> paymentService.redFlush(payId, "", OP, OPERATOR));
+        assertTrue(e0.getMessage().contains("备注"), e0.getMessage());
+
+        Long redId = paymentService.redFlush(payId, "付错了:这笔该付蔡彩云", OP, OPERATOR);
+
+        // 原单已红冲(历史不改写),红冲行=负额承接
+        assertEquals(Payment.ST_RED_FLUSHED, paymentMapper.selectById(payId).getPayStatus());
+        Payment red = paymentMapper.selectById(redId);
+        assertEquals(Payment.ST_RED, red.getPayStatus());
+        assertEquals(payId, red.getRedFlushOf(), "红冲行回链原单");
+        assertEquals(0, red.getAmount().compareTo(new BigDecimal("-350.00")), "负额红冲行");
+        assertTrue(red.getPayNo().startsWith("FKR-"), "红冲单号 FKR- 前缀:" + red.getPayNo());
+
+        // 退款流水:钱按原路回账户(收 350),账户余额恢复
+        CashFlow refund = cashFlowMapper.selectOne(new LambdaQueryWrapper<CashFlow>()
+                .eq(CashFlow::getRefDocType, "付款单").eq(CashFlow::getRefDocId, redId).last("LIMIT 1"));
+        assertNotNull(refund, "红冲落退款流水(钱只能被单据改)");
+        assertEquals("收", refund.getDirection());
+        assertEquals(0, refund.getAmount().compareTo(new BigDecimal("350.00")));
+        assertEquals("供应商付款", refund.getCategory());
+        assertEquals(0, accountService.balanceOf(a.getId()).compareTo(new BigDecimal("5000")), "账户余额恢复 5000");
+
+        // Σ已付款自动回落 → 应付余额恢复 350;结算单回待付款可重新核销
+        assertEquals(0, overview(s.getId()).getBalance().compareTo(new BigDecimal("350.00")), "应付恢复(红字承接不改写历史)");
+        SettleBill restored = billMapper.selectById(bill.getId());
+        assertEquals(SettleBill.ST_PENDING_PAY, restored.getBillStatus(), "结算单 已完成→待付款");
+        assertTrue(restored.getDiffNote().contains("已红冲"), "留痕:" + restored.getDiffNote());
+
+        // 一张单只能红冲一次;红冲行自身不能再红冲
+        BizException e1 = assertThrows(BizException.class,
+                () -> paymentService.redFlush(payId, "再冲一次", OP, OPERATOR));
+        assertTrue(e1.getMessage().contains("仅[已付款/结算完成/差异挂起]") || e1.getMessage().contains("红冲过"), e1.getMessage());
+        BizException e2 = assertThrows(BizException.class,
+                () -> paymentService.redFlush(redId, "冲红冲行", OP, OPERATOR));
+        assertTrue(e2.getMessage().contains("红冲行"), e2.getMessage());
+
+        // 逾期 aging 只读口跑通(P1-5 数据口)
+        assertNotNull(payableService.payableAging());
+    }
 }

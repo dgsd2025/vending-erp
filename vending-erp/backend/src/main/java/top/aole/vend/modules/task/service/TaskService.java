@@ -164,9 +164,41 @@ public class TaskService {
             }
             case RoutineTask.CHECK_STOCKTAKE:
                 return taskQueryMapper.stocktakeOk(date.format(DateTimeFormatter.ofPattern("yyyy-MM"))) > 0;
+            case RoutineTask.CHECK_SETTLEMENT:
+                return taskQueryMapper.settlementOk(date.format(DateTimeFormatter.ofPattern("yyyy-MM"))) > 0;
+            case RoutineTask.CHECK_CASH_CHECK:
+                return taskQueryMapper.cashCheckOk(date.format(DateTimeFormatter.ofPattern("yyyy-MM"))) > 0;
             default:
                 return false;
         }
+    }
+
+    /**
+     * 按校验类型对所有未完成实例跑系统校验(M3-9 七律修复:业务收口主动触发,不等日历页懒校验)。
+     * 复用 {@link #runCheck} 同一把尺子;钱盘完成(CashCheckService.finish)调 CASH_CHECK。
+     *
+     * @return 自动打勾的实例数
+     */
+    @Transactional
+    public int autoCheckByType(String checkType) {
+        if (StrUtil.isBlank(checkType)) {
+            return 0;
+        }
+        List<TaskInstance> open = taskInstanceMapper.selectList(new LambdaQueryWrapper<TaskInstance>()
+                .eq(TaskInstance::getCheckType, checkType)
+                .ne(TaskInstance::getInstanceStatus, TaskInstance.STATUS_DONE));
+        int passed = 0;
+        for (TaskInstance inst : open) {
+            if (runCheck(inst.getCheckType(), inst.getTaskDate())) {
+                inst.setInstanceStatus(TaskInstance.STATUS_DONE);
+                inst.setDoneType(TaskInstance.DONE_AUTO);
+                inst.setDoneTime(LocalDateTime.now());
+                inst.setDoneBy("系统");
+                taskInstanceMapper.updateById(inst);
+                passed++;
+            }
+        }
+        return passed;
     }
 
     /** 对某日所有未完成实例跑系统校验,通过的自动打勾(done_type=系统校验 ✅) */

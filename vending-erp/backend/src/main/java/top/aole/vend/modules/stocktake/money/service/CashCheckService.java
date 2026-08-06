@@ -53,6 +53,7 @@ import java.util.stream.Collectors;
  */
 @Service
 @RequiredArgsConstructor
+@lombok.extern.slf4j.Slf4j
 public class CashCheckService {
 
     private static final DateTimeFormatter DAY = DateTimeFormatter.BASIC_ISO_DATE;
@@ -71,6 +72,8 @@ public class CashCheckService {
     private final PayableService payableService;
     /** M3-9 P1-1:平台待结算真值口径(与结算单/总览同源,别处不许另抄) */
     private final SettlementQueryMapper settlementQueryMapper;
+    /** M3-9 七律修复(铁律#8):钱盘收口触发「月度钱盘」任务系统校验(复用 task 引擎不重造) */
+    private final top.aole.vend.modules.task.service.TaskService taskService;
     private final OpLogService opLogService;
 
     // ============================== 开始核对(快照系统数) ==============================
@@ -290,6 +293,17 @@ public class CashCheckService {
         }
         opLogService.record(operator, "完成钱盘核对", "cash_check", checkId,
                 CashCheck.ST_IN_PROGRESS, CashCheck.ST_DONE);
+        // M3-9 七律修复(铁律#8):钱盘收口即触发「月度钱盘」任务系统校验自动打勾——
+        // 复用 task 模块同一把尺子(runCheck CASH_CHECK),不重造;校验失败不影响收口本身
+        try {
+            int passed = taskService.autoCheckByType(top.aole.vend.modules.task.domain.entity.RoutineTask.CHECK_CASH_CHECK);
+            if (passed > 0) {
+                opLogService.record("系统", "钱盘任务系统校验自动打勾", "cash_check", checkId,
+                        null, "task_instance ✅ ×" + passed);
+            }
+        } catch (Exception e) {
+            log.warn("钱盘任务自动校验失败(不影响钱盘收口):{}", e.getMessage());
+        }
     }
 
     /** 作废(未完成的核对可以废弃重来;记录不删,状态置已作废) */

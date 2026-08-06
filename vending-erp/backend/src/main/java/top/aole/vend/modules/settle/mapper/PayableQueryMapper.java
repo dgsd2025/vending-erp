@@ -125,7 +125,8 @@ public interface PayableQueryMapper {
             "SELECT p.id, p.pay_no AS payNo, p.supplier_id AS supplierId, s.supplier_name AS supplierName, " +
             "       p.account_id AS accountId, a.account_name AS accountName, p.amount, " +
             "       p.deduction_amount AS deductionAmount, p.settle_bill_id AS settleBillId, b.bill_no AS billNo, " +
-            "       p.pay_status AS payStatus, p.pay_time AS payTime, p.remark, p.create_time AS createTime " +
+            "       p.pay_status AS payStatus, p.pay_time AS payTime, p.remark, p.red_flush_of AS redFlushOf, " +
+            "       p.create_time AS createTime " +
             "FROM yc_vend_payment p " +
             "LEFT JOIN yc_vend_supplier s ON s.id=p.supplier_id " +
             "LEFT JOIN yc_vend_account a ON a.id=p.account_id " +

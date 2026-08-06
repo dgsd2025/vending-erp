@@ -7,6 +7,7 @@ import {
   createSettlementBill,
   exchangeRoi,
   listSettlementBills,
+  redFlushSettlementBill,
   resolveSettlementDiff,
   settlementOverview,
   voidSettlementBill,
@@ -25,6 +26,9 @@ import { listAccounts, uploadAttachment, type AccountRow } from '@/api/money'
  */
 
 const router = useRouter()
+
+/** 数据变化通知(Money.vue 流程条按真实状态重算) */
+const emit = defineEmits<{ (e: 'changed', payload: { overview: SettlementOverview | null; bills: BillRow[] }): void }>()
 
 const overview = ref<SettlementOverview | null>(null)
 const bills = ref<BillRow[]>([])
@@ -53,6 +57,7 @@ async function load() {
     if (ov.mode === 'PLATFORM') {
       accounts.value = (await listAccounts()).filter((a) => !a.isVirtual && a.status === 1)
     }
+    emit('changed', { overview: ov, bills: rows })
   } finally {
     loading.value = false
   }
@@ -207,6 +212,27 @@ async function doVoid(row: BillRow) {
   }
 }
 
+/** 已核销/已核对单红冲逆向(M3-9:原 TODO 兑现;老板守卫+备注强制) */
+async function doRedFlush(row: BillRow) {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      row.modeSnap === 'PLATFORM'
+        ? `红冲逆向「${row.stmtNo}」?已核销单录错的唯一逆向:回填的销售整体退回待结算 + 流水按净额反向冲回(钱原路退)+ 状态回待核对,可改数重新核销。老板操作,原因备注必填。`
+        : `红冲逆向「${row.stmtNo}」?核对单没动钱,状态回待核对可重录。老板操作,原因备注必填。`,
+      '红冲逆向(老板)', { confirmButtonText: '确认红冲', cancelButtonText: '取消', inputPlaceholder: '如:到账数录错/区间选错' },
+    )
+    if (!value) {
+      ElMessage.warning('红冲逆向必须填写原因备注(留痕)')
+      return
+    }
+    const r = await redFlushSettlementBill(row.id, value)
+    ElMessage.success(`已红冲逆向:退回填 ${r.unbackfillCount} 笔销售,反向流水 ${r.reverseFlowCount} 条,状态回待核对`)
+    load()
+  } catch {
+    /* 取消/后端已弹错(非老板角色/状态不符) */
+  }
+}
+
 function statusTag(s: string): string {
   if (s === '已核销' || s === '已核对') return 'success'
   if (s === '差异挂起') return 'danger'
@@ -322,6 +348,11 @@ function statusTag(s: string): string {
             <el-button v-else-if="row.stlStatus === '差异挂起'" size="small" type="danger" @click="doResolve(row)">
               复核收口
             </el-button>
+            <template v-else-if="row.stlStatus === '已核销' || row.stlStatus === '已核对'">
+              <el-button size="small" @click="doRedFlush(row)">红冲逆向</el-button>
+              <span v-if="row.diffNote" class="diff-note" :title="row.diffNote">📝 {{ row.diffNote }}</span>
+              <span v-else class="diff-note">{{ row.confirmBy ? `经手:${row.confirmBy}` : '' }}</span>
+            </template>
             <span v-else-if="row.diffNote" class="diff-note" :title="row.diffNote">📝 {{ row.diffNote }}</span>
             <span v-else class="diff-note">{{ row.confirmBy ? `经手:${row.confirmBy}` : '' }}</span>
           </template>

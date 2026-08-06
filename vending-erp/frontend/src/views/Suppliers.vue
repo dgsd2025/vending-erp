@@ -3,9 +3,9 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   confirmBill, confirmPayment, createDeduction, createPayment, listBills, listDeductions,
-  listPayments, resolvePaymentDiff, statementExportUrl, supplierOverview, supplierStatement,
-  voidDeduction, type BillRow, type DeductionRow, type PaymentRow, type StatementResp,
-  type SupplierOverviewRow,
+  listPayments, redFlushPayment, resolvePaymentDiff, statementExportUrl, supplierOverview,
+  supplierStatement, voidDeduction, voidPayment, type BillRow, type DeductionRow,
+  type PaymentRow, type StatementResp, type SupplierOverviewRow,
 } from '@/api/settle'
 import { listAccounts, uploadAttachment, type AccountRow } from '@/api/money'
 
@@ -77,7 +77,10 @@ const billChip = (s: string) =>
       : s === '待付款' || s === '待冲抵' ? 'warning'
         : s === '已作废' ? 'info' : ''
 const payChip = (s: string) =>
-  s === '结算完成' ? 'success' : s === '差异挂起' ? 'danger' : s === '待付款' ? 'warning' : ''
+  s === '结算完成' ? 'success'
+    : s === '差异挂起' ? 'danger'
+      : s === '待付款' ? 'warning'
+        : s === '已作废' || s === '已红冲' || s === '红冲' ? 'info' : ''
 
 const pendingDeductions = computed(() => deductions.value.filter((d) => d.dedStatus === '待抵扣'))
 const payableBills = computed(() => bills.value.filter((b) => b.direction === '正常' && b.billStatus === '待付款'))
@@ -197,6 +200,43 @@ async function rowConfirm(pay: PaymentRow) {
     /* 无凭证等被拒:硬门禁文案已由拦截器弹出 */
   }
 }
+// ---------- 逆向出口(M3-9 七律修复):待付款作废 / 钱已动红冲 ----------
+async function rowVoid(pay: PaymentRow) {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      `作废付款单「${pay.payNo}」?仅待付款可作废(钱没动);原因备注必填留痕。`,
+      '作废付款单', { confirmButtonText: '作废', cancelButtonText: '取消', inputPlaceholder: '如:录错供应商,重录' },
+    )
+    if (!value) {
+      ElMessage.warning('作废必须填写原因备注(留痕)')
+      return
+    }
+    await voidPayment(pay.id, value)
+    ElMessage.success('付款单已作废(留痕不删)')
+    await load()
+  } catch {
+    /* 取消/拦截器已弹错 */
+  }
+}
+async function rowRedFlush(pay: PaymentRow) {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      `红冲付款单「${pay.payNo}」(¥${fmt(pay.amount)})?钱已动的唯一逆向:生成负额红冲行 + 退款流水回账户` +
+        `${pay.settleBillId ? ' + 结算单回待付款(可重新付款核销)' : ''};历史不改写。原因备注必填。`,
+      '红冲付款单', { confirmButtonText: '确认红冲', cancelButtonText: '取消', inputPlaceholder: '如:付错对象/重复付款' },
+    )
+    if (!value) {
+      ElMessage.warning('红冲必须填写原因备注(留痕)')
+      return
+    }
+    await redFlushPayment(pay.id, value)
+    ElMessage.success('已红冲:退款流水已落账,应付余额自动恢复' + (pay.settleBillId ? ',结算单回待付款' : ''))
+    await load()
+  } catch {
+    /* 取消/拦截器已弹错 */
+  }
+}
+
 async function rowResolve(pay: PaymentRow) {
   try {
     const { value } = await ElMessageBox.prompt(
@@ -398,15 +438,26 @@ function exportStatement() {
             <el-table-column label="状态" width="90">
               <template #default="{ row }"><el-tag size="small" :type="payChip(row.payStatus) || 'info'">{{ row.payStatus }}</el-tag></template>
             </el-table-column>
-            <el-table-column label="操作" min-width="180">
+            <el-table-column label="操作" min-width="220">
               <template #default="{ row }">
                 <template v-if="row.payStatus === '待付款'">
                   <input type="file" accept="image/*,.pdf" class="file-mini" @change="rowUpload(row, $event)" />
                   <el-button size="small" type="primary" @click="rowConfirm(row)">确认付款</el-button>
+                  <el-button size="small" @click="rowVoid(row)">作废</el-button>
                 </template>
-                <el-button v-else-if="row.payStatus === '差异挂起'" size="small" type="danger" @click="rowResolve(row)">
-                  补说明闭环
+                <template v-else-if="row.payStatus === '差异挂起'">
+                  <el-button size="small" type="danger" @click="rowResolve(row)">补说明闭环</el-button>
+                  <el-button size="small" @click="rowRedFlush(row)">红冲</el-button>
+                </template>
+                <el-button
+                  v-else-if="(row.payStatus === '已付款' || row.payStatus === '结算完成') && !row.redFlushOf"
+                  size="small"
+                  @click="rowRedFlush(row)"
+                >
+                  红冲
                 </el-button>
+                <span v-else-if="row.payStatus === '已红冲'" class="mini">已被红冲(负额行承接)</span>
+                <span v-else-if="row.payStatus === '红冲'" class="mini">红冲行 → 原单 #{{ row.redFlushOf }}</span>
               </template>
             </el-table-column>
             <template #empty><span class="mini">暂无付款记录</span></template>

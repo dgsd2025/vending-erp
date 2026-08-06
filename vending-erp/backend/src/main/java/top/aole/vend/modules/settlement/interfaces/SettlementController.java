@@ -71,6 +71,23 @@ public class SettlementController {
         return R.ok(null);
     }
 
+    @ApiOperation("已核销单红冲逆向(M3-9 七律修复):退回填+按流水净额整体反冲+状态回待核对;老板守卫+备注强制")
+    @PostMapping("/bills/{id}/red-flush")
+    public R<SettlementDtos.RedFlushResult> redFlush(
+            @PathVariable Long id,
+            @RequestBody SettlementDtos.ResolveDiffReq req,
+            @RequestHeader(value = Operators.HEADER, required = false) String op,
+            @RequestHeader(value = "X-User-Role", required = false) String role) {
+        return R.ok(settlementService.redFlush(id, req == null ? null : req.getNote(),
+                Operators.resolve(role), UID, Operators.resolve(op)));
+    }
+
+    @ApiOperation("待结算最老账龄 aging(M3-9 七律修复:驾驶舱「超期未结算」红灯只读数据口,阈值35天)")
+    @GetMapping("/pending-aging")
+    public R<SettlementDtos.PendingAgingResp> pendingAging() {
+        return R.ok(settlementService.pendingAging());
+    }
+
     @ApiOperation("兑换活动 ROI:Σ兑换出货成本 vs Σ厂家补贴确认额(deduction 非作废;补贴对冲兑换成本)")
     @GetMapping("/exchange-roi")
     public R<SettlementDtos.ExchangeRoiResp> exchangeRoi(

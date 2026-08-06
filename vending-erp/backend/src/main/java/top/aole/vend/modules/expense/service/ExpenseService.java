@@ -161,6 +161,110 @@ public class ExpenseService {
         return toRow(exp);
     }
 
+    // ============================== 逆向出口(M3-9 七律修复 P1-1b) ==============================
+
+    /** 作废支出单:仅[待确认]——钱没动,误录单不再永远躺在列表;备注强制留痕 */
+    @Transactional(rollbackFor = Exception.class)
+    public void voidExpense(Long id, String note, Long userId, String operator) {
+        if (StrUtil.isBlank(note)) {
+            throw new BizException("作废支出单必须填写原因备注(留痕)");
+        }
+        Expense exp = mustGet(id);
+        if (!Expense.STATUS_PENDING.equals(exp.getExpStatus())) {
+            throw new BizException(String.format(
+                    "支出单[%s]状态为[%s],仅[待确认]可作废;已确认(钱已动)的唯一逆向=红冲", exp.getExpNo(), exp.getExpStatus()));
+        }
+        int claimed = expenseMapper.update(null,
+                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Expense>()
+                        .eq(Expense::getId, id)
+                        .eq(Expense::getExpStatus, Expense.STATUS_PENDING)
+                        .set(Expense::getExpStatus, Expense.STATUS_VOID)
+                        .set(Expense::getUpdateUser, userId));
+        if (claimed != 1) {
+            throw new BizException(String.format("支出单[%s]已被他人处理(并发防双改),请刷新查看", exp.getExpNo()));
+        }
+        opLogService.record(operator, "作废支出单", "expense", id, exp.getExpNo(), "原因:" + note.trim());
+    }
+
+    /**
+     * 红冲支出单(已确认的唯一逆向,红字承接不改写历史):
+     * ① 负额红冲行(ZCR- 单号,red_flush_of 回链);
+     * ② 反向流水:同类别「收」一笔回原账户(pl_line 同行,利润表杂费行自动净额回落);
+     * ③ 设备购置:台账行标记[退回](不删,留痕);
+     * ④ 原单 → 已红冲(条件更新抢占防双红冲)。
+     *
+     * @return 红冲行支出单 ID
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public Long redFlush(Long id, String note, Long userId, String operator) {
+        if (StrUtil.isBlank(note)) {
+            throw new BizException("红冲支出单必须填写原因备注(留痕)");
+        }
+        Expense origin = mustGet(id);
+        if (origin.getRedFlushOf() != null) {
+            throw new BizException(String.format("支出单[%s]本身是红冲行,不能再红冲", origin.getExpNo()));
+        }
+        if (!Expense.STATUS_DONE.equals(origin.getExpStatus())) {
+            throw new BizException(String.format(
+                    "支出单[%s]状态为[%s],仅[已完成]可红冲;待确认误录请走「作废」", origin.getExpNo(), origin.getExpStatus()));
+        }
+        Long existed = expenseMapper.selectCount(new LambdaQueryWrapper<Expense>()
+                .eq(Expense::getRedFlushOf, id));
+        if (existed != null && existed > 0) {
+            throw new BizException(String.format("支出单[%s]已被红冲过,一张单只能红冲一次", origin.getExpNo()));
+        }
+        int claimed = expenseMapper.update(null,
+                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Expense>()
+                        .eq(Expense::getId, id)
+                        .eq(Expense::getExpStatus, Expense.STATUS_DONE)
+                        .set(Expense::getExpStatus, Expense.STATUS_RED_FLUSHED)
+                        .set(Expense::getUpdateUser, userId));
+        if (claimed != 1) {
+            throw new BizException(String.format("支出单[%s]已被他人处理(并发防双红冲),请刷新查看", origin.getExpNo()));
+        }
+
+        LocalDate today = LocalDate.now();
+        String bizPeriod = today.format(PERIOD);
+        // ① 负额红冲行
+        Expense red = new Expense();
+        red.setExpNo(nextNo("ZCR-"));
+        red.setCategory(origin.getCategory());
+        red.setAmount(origin.getAmount().negate());
+        red.setAccountId(origin.getAccountId());
+        red.setIsEquipment(false);
+        red.setEquipName(origin.getEquipName());
+        red.setExpStatus(Expense.STATUS_RED);
+        red.setBizDate(today);
+        red.setBookPeriod(periodLockService.isLocked(bizPeriod) ? YearMonth.now().format(PERIOD) : bizPeriod);
+        red.setRedFlushOf(id);
+        red.setRemark(String.format("红冲支出单[%s]。原因:%s", origin.getExpNo(), note.trim()));
+        red.setCreateUser(userId);
+        expenseMapper.insert(red);
+
+        // ② 反向流水(钱只能被单据改:同类别「收」回原账户,pl_line 净额自动回落)
+        MoneyPostingEvent event = new MoneyPostingEvent(REF_DOC_TYPE, red.getId(), userId);
+        event.inflow(origin.getAccountId(), origin.getAmount(), CATEGORY_FLOW.get(origin.getCategory()),
+                today.atStartOfDay(),
+                String.format("支出红冲退回 %s(原单 %s %s)", red.getExpNo(), origin.getExpNo(), origin.getCategory()));
+        publisher.publishEvent(event);
+
+        // ③ 设备台账行标记退回(不删,留痕)
+        String equipNote = "";
+        if (Boolean.TRUE.equals(origin.getIsEquipment()) && origin.getEquipmentId() != null) {
+            Equipment equipment = equipmentMapper.selectById(origin.getEquipmentId());
+            if (equipment != null) {
+                equipment.setEquipStatus(Equipment.STATUS_RETURNED);
+                equipment.setUpdateUser(userId);
+                equipmentMapper.updateById(equipment);
+                equipNote = String.format(";设备台账 #%d「%s」标记[退回]", equipment.getId(), equipment.getEquipName());
+            }
+        }
+        opLogService.record(operator, "红冲支出单", "expense", id, origin.getExpNo(),
+                String.format("红冲行[%s] 退回%s至账户%d%s;原因:%s",
+                        red.getExpNo(), origin.getAmount(), origin.getAccountId(), equipNote, note.trim()));
+        return red.getId();
+    }
+
     // ============================== 查询 ==============================
 
     public List<ExpenseDtos.ExpenseRow> list(String status) {
@@ -234,6 +338,7 @@ public class ExpenseService {
         row.setRemark(e.getRemark());
         row.setCreateTime(e.getCreateTime());
         row.setAttachmentCount(attachmentService.countOf(ATTACH_REF_TYPE, e.getId()));
+        row.setRedFlushOf(e.getRedFlushOf());
         return row;
     }
 
@@ -246,7 +351,12 @@ public class ExpenseService {
     }
 
     private String generateNo() {
-        String like = "ZC-" + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE) + "-";
+        return nextNo("ZC-");
+    }
+
+    /** 单号发号(ZC-=正常支出 / ZCR-=红冲行):前缀-yyyyMMdd-三位流水 */
+    private String nextNo(String prefix) {
+        String like = prefix + LocalDate.now().format(DateTimeFormatter.BASIC_ISO_DATE) + "-";
         Long count = expenseMapper.selectCount(new LambdaQueryWrapper<Expense>()
                 .likeRight(Expense::getExpNo, like));
         return like + String.format("%03d", count + 1);

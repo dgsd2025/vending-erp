@@ -27,6 +27,12 @@ public class Payment extends BaseEntity {
     public static final String ST_PAID = "已付款";
     public static final String ST_SETTLED = "结算完成";
     public static final String ST_DIFF = "差异挂起";
+    /** 已作废(M3-9 七律修复:仅待付款可作废——钱没动,单据留痕不删) */
+    public static final String ST_VOID = "已作废";
+    /** 已红冲(钱已动的唯一逆向:被负额红冲行承接,历史不改写) */
+    public static final String ST_RED_FLUSHED = "已红冲";
+    /** 红冲行自身状态(负额,pay_time 非空 → Σ已付款自动回落) */
+    public static final String ST_RED = "红冲";
 
     private String payNo;
 
@@ -57,4 +63,7 @@ public class Payment extends BaseEntity {
     private String bookPeriod;
 
     private String remark;
+
+    /** 红冲指向的原付款单ID(本行=负额红冲行;原单被红冲后 pay_status=已红冲) */
+    private Long redFlushOf;
 }

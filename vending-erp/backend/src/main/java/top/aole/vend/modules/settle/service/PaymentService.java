@@ -205,6 +205,126 @@ public class PaymentService {
         return payment;
     }
 
+    // ============================== 逆向出口(M3-9 七律修复 P1-1a) ==============================
+
+    /**
+     * 作废付款单:仅[待付款]——钱没动,单据留痕不删(误录单不再永远躺在列表)。
+     * 备注强制;条件更新抢占防并发(作废与确认赛跑只允许一个赢)。
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public void voidPayment(Long payId, String note, Long userId, String operator) {
+        if (note == null || note.trim().isEmpty()) {
+            throw new BizException("作废付款单必须填写原因备注(留痕)");
+        }
+        Payment payment = mustGet(payId);
+        if (!Payment.ST_PENDING.equals(payment.getPayStatus())) {
+            throw new BizException(String.format(
+                    "付款单[%s]状态为[%s],仅[待付款]可作废;钱已动的单据唯一逆向=红冲(负额承接,不改写历史)",
+                    payment.getPayNo(), payment.getPayStatus()));
+        }
+        int claimed = paymentMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Payment>()
+                .eq(Payment::getId, payId)
+                .eq(Payment::getPayStatus, Payment.ST_PENDING)
+                .set(Payment::getPayStatus, Payment.ST_VOID)
+                .set(Payment::getUpdateUser, userId));
+        if (claimed != 1) {
+            throw new BizException(String.format("付款单[%s]已被他人处理(并发防双改),请刷新查看", payment.getPayNo()));
+        }
+        opLogService.record(operator, "作废付款单", "payment", payId, payment.getPayNo(), "原因:" + note.trim());
+    }
+
+    /**
+     * 红冲付款单(钱已动的唯一逆向,§13.2 红字承接范式):
+     * 仅[已付款/结算完成/差异挂起](pay_time 非空=钱真动过)可红冲;备注强制。
+     * ① 生成负额红冲行(pay_time=now → Σ已付款自动回落,应付余额/对账单自动修正,不改写历史);
+     * ② 退款流水:MoneyPostingEvent 反向「收」一笔供应商付款(钱回到原付款账户);
+     * ③ 恢复结算单:本付款核销过的结算单 已完成/差异挂起 → 回[待付款](可重新付款核销);
+     * ④ 原单 → 已红冲(条件更新抢占,防双红冲双退款)。
+     *
+     * @return 红冲行付款单 ID
+     */
+    @Transactional(rollbackFor = Exception.class)
+    public Long redFlush(Long payId, String note, Long userId, String operator) {
+        if (note == null || note.trim().isEmpty()) {
+            throw new BizException("红冲付款单必须填写原因备注(留痕)");
+        }
+        Payment origin = mustGet(payId);
+        if (origin.getRedFlushOf() != null) {
+            throw new BizException(String.format("付款单[%s]本身是红冲行,不能再红冲(请对原业务单据重新操作)", origin.getPayNo()));
+        }
+        String st = origin.getPayStatus();
+        if (!Payment.ST_PAID.equals(st) && !Payment.ST_SETTLED.equals(st) && !Payment.ST_DIFF.equals(st)) {
+            throw new BizException(String.format(
+                    "付款单[%s]状态为[%s],仅[已付款/结算完成/差异挂起]可红冲;待付款误录请走「作废」",
+                    origin.getPayNo(), st));
+        }
+        if (origin.getPayTime() == null) {
+            throw new BizException(String.format("付款单[%s]没有付款时间(钱没动),不能红冲,请走「作废」", origin.getPayNo()));
+        }
+        Long existed = paymentMapper.selectCount(new LambdaQueryWrapper<Payment>()
+                .eq(Payment::getRedFlushOf, payId));
+        if (existed != null && existed > 0) {
+            throw new BizException(String.format("付款单[%s]已被红冲过,一张单只能红冲一次", origin.getPayNo()));
+        }
+        // 条件更新抢占:原单 → 已红冲(并发双红冲只允许一个通过,否则双笔退款流水)
+        int claimed = paymentMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Payment>()
+                .eq(Payment::getId, payId)
+                .eq(Payment::getPayStatus, st)
+                .set(Payment::getPayStatus, Payment.ST_RED_FLUSHED)
+                .set(Payment::getUpdateUser, userId));
+        if (claimed != 1) {
+            throw new BizException(String.format("付款单[%s]已被他人处理(并发防双红冲),请刷新查看", origin.getPayNo()));
+        }
+
+        LocalDateTime now = LocalDateTime.now();
+        // ① 负额红冲行(红字承接,Σ已付款=原单+红冲行自然归零)
+        Payment red = new Payment();
+        red.setPayNo(nextNo("FKR-"));
+        red.setSupplierId(origin.getSupplierId());
+        red.setAccountId(origin.getAccountId());
+        red.setAmount(origin.getAmount().negate());
+        red.setDeductionAmount(BigDecimal.ZERO);
+        red.setSettleBillId(origin.getSettleBillId());
+        red.setPayStatus(Payment.ST_RED);
+        red.setPayTime(now);
+        red.setConfirmBy(userId);
+        red.setConfirmAt(now);
+        red.setBookPeriod(now.format(PERIOD));
+        red.setRedFlushOf(payId);
+        red.setRemark(String.format("红冲付款单[%s]。原因:%s", origin.getPayNo(), note.trim()));
+        red.setCreateUser(userId);
+        paymentMapper.insert(red);
+
+        // ② 退款流水(钱只能被单据改:反向「收」回原账户,同事务写手校验失败整体回滚)
+        MoneyPostingEvent event = new MoneyPostingEvent("付款单", red.getId(), userId);
+        event.inflow(origin.getAccountId(), origin.getAmount(), CashFlowCategory.SUPPLIER_PAYMENT,
+                now, String.format("付款红冲退款 %s(原单 %s)", red.getPayNo(), origin.getPayNo()));
+        eventPublisher.publishEvent(event);
+
+        // ③ 恢复结算单:本付款把它核销成[已完成]/挂成[差异挂起]的 → 回[待付款],可重新付款
+        String chain = "";
+        if (origin.getSettleBillId() != null) {
+            SettleBill bill = settleBillService.mustGet(origin.getSettleBillId());
+            if (SettleBill.ST_DONE.equals(bill.getBillStatus()) || SettleBill.ST_DIFF.equals(bill.getBillStatus())) {
+                int restored = billMapper.update(null, new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<SettleBill>()
+                        .eq(SettleBill::getId, bill.getId())
+                        .eq(SettleBill::getBillStatus, bill.getBillStatus())
+                        .set(SettleBill::getBillStatus, SettleBill.ST_PENDING_PAY)
+                        .set(SettleBill::getDiffNote, (bill.getDiffNote() == null ? "" : bill.getDiffNote() + " → ")
+                                + String.format("付款[%s]已红冲,回待付款", origin.getPayNo()))
+                        .set(SettleBill::getUpdateUser, userId));
+                chain = restored == 1
+                        ? String.format(";结算单[%s] %s→待付款(可重新付款核销;采购单状态不回退,重付后自动覆盖)",
+                        bill.getBillNo(), bill.getBillStatus())
+                        : String.format(";结算单[%s]状态已被他人变更,未回退(请人工核对)", bill.getBillNo());
+            }
+        }
+        opLogService.record(operator, "红冲付款单", "payment", payId, origin.getPayNo(),
+                String.format("红冲行[%s] 退款%s回账户%d%s;原因:%s",
+                        red.getPayNo(), origin.getAmount(), origin.getAccountId(), chain, note.trim()));
+        return red.getId();
+    }
+
     // ============================== 内部 ==============================
 
     public Payment mustGet(Long payId) {
@@ -232,7 +352,12 @@ public class PaymentService {
 
     /** 付款单号:FK-yyyyMMdd-三位流水 */
     private String nextPayNo() {
-        String like = "FK-" + LocalDate.now().format(DAY) + "-";
+        return nextNo("FK-");
+    }
+
+    /** 单号发号(FK-=正常付款 / FKR-=红冲行):前缀-yyyyMMdd-三位流水 */
+    private String nextNo(String prefix) {
+        String like = prefix + LocalDate.now().format(DAY) + "-";
         Long count = paymentMapper.selectCount(new LambdaQueryWrapper<Payment>()
                 .likeRight(Payment::getPayNo, like));
         return like + String.format("%03d", count + 1);

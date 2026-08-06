@@ -48,6 +48,10 @@ class TaskEngineTest extends BaseIntegrationTest {
     private ImportBatchMapper importBatchMapper;
     @Autowired
     private OpLogMapper opLogMapper;
+    @Autowired
+    private top.aole.vend.modules.stocktake.money.mapper.CashCheckMapper cashCheckMapper;
+    @Autowired
+    private top.aole.vend.modules.settlement.mapper.SettlementMapper settlementMapper;
 
     private final LocalDate today = LocalDate.now();
 
@@ -319,6 +323,65 @@ class TaskEngineTest extends BaseIntegrationTest {
                 assertEquals(0L, persisted, "未来日实例不落库");
             }
         }
+    }
+
+    @Test
+    @DisplayName("⑨ M3-9七律修复:结算核对/月度钱盘两条种子任务落地——每月2日/1日到期;SETTLEMENT/CASH_CHECK 系统校验真数据才变绿")
+    void moneyTaskSeedsAndChecks() {
+        // 种子存在且周期/校验类型正确(V1.0.14 迁移兑现 Money.vue「⚡自动任务」承诺)
+        RoutineTask settle = defByKey("settlement_check");
+        assertNotNull(settle, "平台结算核对种子必须存在");
+        assertEquals(RoutineTask.CYCLE_MONTHLY, settle.getCycleType());
+        assertEquals(2, settle.getCycleValue().intValue(), "每月 2 日");
+        assertEquals(RoutineTask.CHECK_SETTLEMENT, settle.getCheckType());
+        RoutineTask cash = defByKey("monthly_cash_check");
+        assertNotNull(cash, "月度钱盘种子必须存在");
+        assertEquals(RoutineTask.CYCLE_MONTHLY, cash.getCycleType());
+        assertEquals(1, cash.getCycleValue().intValue(), "每月 1 日");
+        assertEquals(RoutineTask.CHECK_CASH_CHECK, cash.getCheckType());
+        // 到期判定
+        assertTrue(taskService.isDue(settle, LocalDate.of(2026, 8, 2)));
+        assertFalse(taskService.isDue(settle, LocalDate.of(2026, 8, 3)));
+        assertTrue(taskService.isDue(cash, LocalDate.of(2026, 8, 1)));
+
+        // —— CASH_CHECK:没有已完成钱盘 → 红;造一张已完成 → 绿 ——
+        String month = today.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM"));
+        assertFalse(taskService.runCheck(RoutineTask.CHECK_CASH_CHECK, today), "没有钱盘记录不许打勾");
+        top.aole.vend.modules.stocktake.money.domain.entity.CashCheck check =
+                new top.aole.vend.modules.stocktake.money.domain.entity.CashCheck();
+        check.setCheckNo("QP-TEST-" + System.nanoTime() % 1_000_000);
+        check.setCheckPeriod(month);
+        check.setCheckStatus(top.aole.vend.modules.stocktake.money.domain.entity.CashCheck.ST_DONE);
+        check.setSettleModeSnap("UNSET");
+        check.setPlatformSkipped(true);
+        cashCheckMapper.insert(check);
+        assertTrue(taskService.runCheck(RoutineTask.CHECK_CASH_CHECK, today), "当月已完成钱盘 → 系统校验通过");
+
+        // —— SETTLEMENT:没有已核销/已核对单 → 红;造一张已核销 → 绿 ——
+        assertFalse(taskService.runCheck(RoutineTask.CHECK_SETTLEMENT, today));
+        top.aole.vend.modules.settlement.domain.entity.Settlement s =
+                new top.aole.vend.modules.settlement.domain.entity.Settlement();
+        s.setStmtNo("PT-TEST-" + System.nanoTime() % 1_000_000);
+        s.setPeriodStart(today.withDayOfMonth(1));
+        s.setPeriodEnd(today);
+        s.setPlatformAmount(java.math.BigDecimal.TEN);
+        s.setStlStatus(top.aole.vend.modules.settlement.domain.entity.Settlement.ST_SETTLED);
+        s.setModeSnap("PLATFORM");
+        s.setConfirmAt(java.time.LocalDateTime.now());
+        settlementMapper.insert(s);
+        assertTrue(taskService.runCheck(RoutineTask.CHECK_SETTLEMENT, today), "当月已核销结算单 → 系统校验通过");
+
+        // —— autoCheckByType(钱盘收口主动触发的同一入口):月初实例被自动打勾 ✅ ——
+        LocalDate firstDay = today.withDayOfMonth(1);
+        taskService.materializeDay(firstDay);
+        TaskInstance inst = instOf("monthly_cash_check", firstDay);
+        assertNotNull(inst, "每月 1 日物化钱盘任务实例");
+        int passed = taskService.autoCheckByType(RoutineTask.CHECK_CASH_CHECK);
+        assertTrue(passed >= 1, "收口触发自动校验至少打勾 1 条");
+        TaskInstance done = instOf("monthly_cash_check", firstDay);
+        assertEquals(TaskInstance.STATUS_DONE, done.getInstanceStatus());
+        assertEquals(TaskInstance.DONE_AUTO, done.getDoneType(), "系统校验 ✅,不是手动补标 🟡");
+        assertEquals("系统", done.getDoneBy());
     }
 
     private UserRole role(String name, String code) {

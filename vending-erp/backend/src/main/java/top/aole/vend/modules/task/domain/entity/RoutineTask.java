@@ -28,6 +28,10 @@ public class RoutineTask extends BaseEntity {
     public static final String CHECK_REPLENISH = "REPLENISH";
     /** 系统校验:当月存在已完成盘点单 */
     public static final String CHECK_STOCKTAKE = "STOCKTAKE";
+    /** 系统校验(M3-9 七律修复):当月存在已核销/已核对平台结算单 */
+    public static final String CHECK_SETTLEMENT = "SETTLEMENT";
+    /** 系统校验(M3-9 七律修复):当月存在已完成钱盘核对记录 */
+    public static final String CHECK_CASH_CHECK = "CASH_CHECK";
 
     private String taskKey;
     private String taskName;

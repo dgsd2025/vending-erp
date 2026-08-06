@@ -98,4 +98,23 @@ public final class SettleDtos {
         /** 行:bizDate/refNo/lineType(拿货/拿货红冲/退货/抵扣/付款)/amount/balance/remark */
         private List<Map<String, Object>> lines;
     }
+
+    /** 应付逾期 aging(M3-9 七律修复 P1-5:驾驶舱红灯②的只读数据口) */
+    @Data
+    public static class PayableAgingResp {
+        /** 逾期供应商数(=驾驶舱红灯计数) */
+        private int overdueCount;
+        /** 最长逾期天数 */
+        private int maxOverdueDays;
+        /** 逾期明细行(只含逾期供应商) */
+        private List<PayableAgingRow> rows = new java.util.ArrayList<>();
+    }
+
+    @Data
+    public static class PayableAgingRow {
+        private Long supplierId;
+        private String supplierName;
+        private BigDecimal balance;
+        private Integer overdueDays;
+    }
 }

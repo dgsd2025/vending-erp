@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { reportApi, type GrossMarginResp, type StockResp } from '@/api/report'
+import { reportApi, type GrossMarginResp, type MoneyLightsResp, type StockResp } from '@/api/report'
 import { importsApi, type ImportBatch } from '@/api/imports'
 import { pageAliasPending } from '@/api/basedata'
 import { taskApi, type TodayViewResp } from '@/api/task'
@@ -107,7 +107,9 @@ const redCount = computed(
     pendingAlias.value +
     priceChangeCount.value +
     prekitOverdue.value +
-    clearanceCount.value,
+    clearanceCount.value +
+    // M3-9:钱账四灯计入红灯总数(逾期应付+差异挂起+索赔超期+在途超期)
+    (moneyLights.value?.redTotal ?? 0),
 )
 
 /** 机器卡:当月机器维毛利行(key=machineId) */
@@ -134,22 +136,32 @@ const moneyMode = ref<string | null>(null)
 const moneyPending = ref<number | null>(null)
 const todayFlowCount = ref<number | null>(null)
 const overduePayable = ref(0)
+// M3-9 七律修复(§9.3 首页亮灯):钱账四灯收编进红灯区(逾期应付/差异挂起/索赔超期/在途超期)
+const moneyLights = ref<MoneyLightsResp | null>(null)
 onMounted(async () => {
   try {
     const period = todayStr.slice(0, 7)
-    const [flows, ov, sup] = await Promise.all([
+    const [flows, ov, sup, lights] = await Promise.all([
       pageFlows({ current: 1, size: 200, fromPeriod: period, toPeriod: period }),
       settlementOverview(),
       supplierOverview(),
+      reportApi.moneyLights(),
     ])
     todayFlowCount.value = flows.records.filter((f) => (f.bizTime ?? '').slice(0, 10) === todayStr).length
     moneyMode.value = ov.mode
     moneyPending.value = ov.mode === 'PLATFORM' ? Number(ov.pendingBalance ?? 0) : null
     overduePayable.value = sup.filter((s) => s.overdue).length
+    moneyLights.value = lights
   } catch {
     todayFlowCount.value = null // 接口不可用 → 卡退化显示「—」,不误报
   }
 })
+/** 差异挂起灯点击:结算单/付款差异在供应商页,平台结算差异在钱账页 */
+function gotoDiffPending() {
+  const l = moneyLights.value
+  if (l && Number(l.diffBillCount) + Number(l.diffPaymentCount) > 0) router.push('/suppliers')
+  else router.push('/money')
+}
 </script>
 
 <template>
@@ -223,8 +235,45 @@ onMounted(async () => {
         🏷 <b>{{ clearanceCount }} 个清仓商品滞留超 30 天</b> —— 仓库还压着货,请三选一:退供 / 报损 / 换机促销
         <span class="go">去处理 →</span>
       </div>
+      <!-- M3-9 七律修复:钱账四灯收编进红灯区(§9.3「首页亮灯」明文) -->
+      <div
+        v-if="moneyLights?.overduePayableCount"
+        class="alert a-red"
+        data-block="light-overdue-payable"
+        @click="router.push('/suppliers')"
+      >
+        ⏰ <b>{{ moneyLights.overduePayableCount }} 家供应商货款逾期</b>(最长 {{ moneyLights.maxOverdueDays }} 天)—— 该结的钱没结,先去付款
+        <span class="go">去供应商页处理 →</span>
+      </div>
+      <div
+        v-if="moneyLights?.diffTotal"
+        class="alert a-red"
+        data-block="light-diff-pending"
+        @click="gotoDiffPending()"
+      >
+        ⚖️ <b>{{ moneyLights.diffTotal }} 张单据差异挂起</b>(结算单 {{ moneyLights.diffBillCount }} · 付款 {{ moneyLights.diffPaymentCount }} · 平台结算 {{ moneyLights.diffSettlementCount }})—— 金额对不上的账要收口
+        <span class="go">去处理 →</span>
+      </div>
+      <div
+        v-if="moneyLights?.claimOverdueCount"
+        class="alert a-red"
+        data-block="light-claim-overdue"
+        @click="router.push('/money')"
+      >
+        🧾 <b>{{ moneyLights.claimOverdueCount }} 笔索赔超 {{ moneyLights.claimThresholdDays }} 天未到账</b>(最久 {{ moneyLights.claimOldestDays }} 天)—— 该催厂家/平台了
+        <span class="go">去钱账页跟进 →</span>
+      </div>
+      <div
+        v-if="moneyLights?.settleOverdue"
+        class="alert a-red"
+        data-block="light-settle-overdue"
+        @click="router.push('/money')"
+      >
+        🏦 <b>在途货款超期未结算</b>:最早一笔已挂 {{ moneyLights.settleOldestDays }} 天(阈值 {{ moneyLights.settleThresholdDays }} 天),在途 ¥{{ Number(moneyLights.settlePendingBalance ?? 0).toLocaleString('zh-CN', { minimumFractionDigits: 2 }) }} —— 平台该打款没打,去录结算单核对
+        <span class="go">去钱账页核对 →</span>
+      </div>
       <div v-if="!redCount" class="alert a-blue">
-        ✅ 红灯清零:无负库存 · 无待绑别名 · 无改价待确认 · 无超窗配货单 · 无清仓残余 —— 台账健康
+        ✅ 红灯清零:无负库存 · 无待绑别名 · 无改价待确认 · 无超窗配货单 · 无清仓残余 · 无逾期应付 · 无差异挂起 · 无索赔超期 · 无在途超期 —— 台账健康,钱账干净
       </div>
     </div>
 

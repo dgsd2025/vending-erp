@@ -13,6 +13,7 @@ import org.springframework.web.bind.annotation.RestController;
 import top.aole.vend.common.result.R;
 import top.aole.vend.modules.basedata.interfaces.Operators;
 import top.aole.vend.modules.report.dto.ReportDtos;
+import top.aole.vend.modules.report.service.MoneyLightsService;
 import top.aole.vend.modules.report.service.ReportService;
 
 import java.util.List;
@@ -27,6 +28,7 @@ import java.util.List;
 public class ReportController {
 
     private final ReportService reportService;
+    private final MoneyLightsService moneyLightsService;
 
     @ApiOperation("毛利报表:按月 × SKU/机器(dim=sku|machine);无成本 SKU 毛利显「—(成本待补)」")
     @GetMapping("/gross-margin")
@@ -67,6 +69,12 @@ public class ReportController {
     @GetMapping("/machine/{machineId}/overview")
     public R<ReportDtos.MachineOverviewResp> machineOverview(@PathVariable Long machineId) {
         return R.ok(reportService.machineOverview(machineId));
+    }
+
+    @ApiOperation("驾驶舱钱账四灯(M3-9 七律修复,§9.3 首页亮灯):逾期应付/差异挂起聚合/索赔超期/超期未结算")
+    @GetMapping("/money-lights")
+    public R<MoneyLightsService.MoneyLightsResp> moneyLights() {
+        return R.ok(moneyLightsService.lights());
     }
 
     @ApiOperation("成本重算回写:sale_record.cost_amount + ledger 出库/转移行成本快照(附录C)")

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
-import { createOfflineSale, listOfflineSales, type OfflineSaleRow } from '@/api/expense'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { createOfflineSale, listOfflineSales, reverseOfflineSale, type OfflineSaleRow } from '@/api/expense'
 import { listAccounts, type AccountRow } from '@/api/money'
 import { pageMachines, type Machine } from '@/api/basedata'
 import ProductSelect from '@/components/basedata/ProductSelect.vue'
@@ -73,6 +73,31 @@ async function doCreate() {
   }
 }
 
+/** 一键冲销(M3-9 逆向出口:三件套整体反向;老板守卫+备注强制) */
+const reversingId = ref<number | null>(null)
+async function doReverse(row: OfflineSaleRow) {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      `冲销「${row.orderNo}」(¥${Number(row.amount).toFixed(2)})?三件套整体反向:` +
+        '销售红冲行 + 反向流水(钱原路退出账户);历史不删。老板操作,原因备注必填。',
+      '一键冲销(老板)', { confirmButtonText: '确认冲销', cancelButtonText: '取消', inputPlaceholder: '如:顾客没转账,录错了' },
+    )
+    if (!value) {
+      ElMessage.warning('冲销必须填写原因备注(留痕)')
+      return
+    }
+    reversingId.value = row.saleRecordId
+    const resp = await reverseOfflineSale(row.saleRecordId, value)
+    ElMessage.success(`已冲销:${resp.orderNo} · 反向流水 #${resp.cashFlowId}`)
+    emit('created', resp.saleRecordId) // 让父页刷新流水与账户余额
+    await loadDicts()
+  } catch {
+    /* 取消/后端已弹错(非老板/已冲销过) */
+  } finally {
+    reversingId.value = null
+  }
+}
+
 watch(visible, (v) => {
   if (v) {
     form.qty = 1
@@ -121,8 +146,20 @@ onMounted(() => {
 
     <div v-if="recent.length" class="mini" style="margin-top: 4px">
       近期线下补录:
-      <div v-for="r in recent" :key="r.saleRecordId" class="mini num">
+      <div v-for="r in recent" :key="r.saleRecordId" class="mini num recent-row">
         {{ r.orderNo }} · {{ Number(r.qty) }} 件 · ¥{{ Number(r.amount).toFixed(2) }} · {{ r.bizTime }}
+        <span v-if="r.reversal" class="mini">(冲销行)</span>
+        <span v-else-if="r.reversed" class="mini">(已冲销)</span>
+        <el-button
+          v-else
+          size="small"
+          link
+          type="danger"
+          :loading="reversingId === r.saleRecordId"
+          @click="doReverse(r)"
+        >
+          冲销
+        </el-button>
       </div>
     </div>
 

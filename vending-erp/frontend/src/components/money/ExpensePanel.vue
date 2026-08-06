@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import {
   EQUIPMENT_STATUS,
   EXPENSE_CATEGORIES,
@@ -8,7 +8,9 @@ import {
   createExpense,
   listEquipment,
   listExpenses,
+  redFlushExpense,
   updateEquipment,
+  voidExpense,
   type EquipmentRow,
   type ExpenseRow,
 } from '@/api/expense'
@@ -123,6 +125,46 @@ async function doConfirm(row: ExpenseRow) {
   }
 }
 
+// ============ 逆向出口(M3-9 七律修复):待确认作废 / 已完成红冲 ============
+
+async function doVoid(row: ExpenseRow) {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      `作废支出单「${row.expNo}」?仅待确认可作废(钱没动);原因备注必填留痕。`,
+      '作废支出单', { confirmButtonText: '作废', cancelButtonText: '取消', inputPlaceholder: '如:金额录错,重录' },
+    )
+    if (!value) {
+      ElMessage.warning('作废必须填写原因备注(留痕)')
+      return
+    }
+    await voidExpense(row.id, value)
+    ElMessage.success('支出单已作废(留痕不删)')
+    load()
+  } catch {
+    /* 取消/拦截器已弹错 */
+  }
+}
+
+async function doRedFlush(row: ExpenseRow) {
+  try {
+    const { value } = await ElMessageBox.prompt(
+      `红冲支出单「${row.expNo}」(${row.category} ¥${Number(row.amount).toFixed(2)})?` +
+        `已确认(钱已动)的唯一逆向:负额红冲行 + 反向流水回账户` +
+        `${row.equipmentId ? ' + 设备台账行标[退回]' : ''};历史不改写。原因备注必填。`,
+      '红冲支出单', { confirmButtonText: '确认红冲', cancelButtonText: '取消', inputPlaceholder: '如:重复录入/设备退货' },
+    )
+    if (!value) {
+      ElMessage.warning('红冲必须填写原因备注(留痕)')
+      return
+    }
+    await redFlushExpense(row.id, value)
+    ElMessage.success('已红冲:反向流水已落账,余额与利润表杂费行自动回落')
+    load()
+  } catch {
+    /* 取消/拦截器已弹错 */
+  }
+}
+
 // ============ 设备台账编辑 ============
 
 const equipVisible = ref(false)
@@ -160,7 +202,8 @@ async function saveEquip() {
   }
 }
 
-const statusChip = (s: string) => (s === '待确认' ? 'c-amber' : 'c-green')
+const statusChip = (s: string) =>
+  s === '待确认' ? 'c-amber' : s === '已完成' ? 'c-green' : 'c-gray'
 
 onMounted(() => {
   load()
@@ -215,7 +258,7 @@ defineExpose({ reload: load })
           <span v-else class="mini">—</span>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="210">
+      <el-table-column label="操作" width="270">
         <template #default="{ row }">
           <template v-if="row.expStatus === '待确认'">
             <label class="voucher-btn">
@@ -225,8 +268,15 @@ defineExpose({ reload: load })
             <el-button size="small" type="success" :disabled="!row.attachmentCount" :loading="confirmingId === row.id" @click="doConfirm(row)">
               确认落流水
             </el-button>
+            <el-button size="small" @click="doVoid(row)">作废</el-button>
           </template>
-          <span v-else class="mini">已入账 {{ row.bookPeriod }}</span>
+          <template v-else-if="row.expStatus === '已完成'">
+            <span class="mini">已入账 {{ row.bookPeriod }}</span>
+            <el-button size="small" style="margin-left: 8px" @click="doRedFlush(row)">红冲</el-button>
+          </template>
+          <span v-else-if="row.expStatus === '已红冲'" class="mini">已被红冲(负额行承接)</span>
+          <span v-else-if="row.expStatus === '红冲'" class="mini">红冲行 → 原单 #{{ row.redFlushOf }}</span>
+          <span v-else-if="row.expStatus === '已作废'" class="mini">已作废(留痕)</span>
         </template>
       </el-table-column>
     </el-table>

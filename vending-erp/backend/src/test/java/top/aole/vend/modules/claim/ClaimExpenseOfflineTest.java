@@ -472,6 +472,132 @@ class ClaimExpenseOfflineTest extends BaseIntegrationTest {
         assertTrue(e2.getMessage().contains("不可索赔"), e2.getMessage());
     }
 
+    // ============================== ⑪ M3-9 七律修复:支出单逆向出口 ==============================
+
+    @Test
+    @DisplayName("M3-9七律修复:支出单作废(仅待确认,备注强制);已完成红冲=负额红冲行+反向流水回账户+设备台账标退回;双红冲被拒")
+    void expenseVoidAndRedFlush() {
+        Long accountId = account("现金", "2000");
+
+        // —— 作废:仅待确认,备注强制,作废后不能确认 ——
+        ExpenseDtos.ExpenseCreateReq pendingReq = new ExpenseDtos.ExpenseCreateReq();
+        pendingReq.setCategory(Expense.CATEGORY_MISC);
+        pendingReq.setAmount(new BigDecimal("30.00"));
+        pendingReq.setAccountId(accountId);
+        Long pendingId = expenseService.create(pendingReq, OP, OPERATOR);
+        BizException e0 = assertThrows(BizException.class,
+                () -> expenseService.voidExpense(pendingId, "", OP, OPERATOR));
+        assertTrue(e0.getMessage().contains("备注"), e0.getMessage());
+        expenseService.voidExpense(pendingId, "录错金额,重录", OP, OPERATOR);
+        assertEquals(Expense.STATUS_VOID, expenseMapper.selectById(pendingId).getExpStatus());
+        expenseVoucher(pendingId);
+        assertThrows(BizException.class, () -> expenseService.confirm(pendingId, OP, OPERATOR));
+
+        // —— 红冲:设备购置已确认 → 负额红冲行 + 反向流水 + 台账标退回 ——
+        ExpenseDtos.ExpenseCreateReq eqReq = new ExpenseDtos.ExpenseCreateReq();
+        eqReq.setCategory(Expense.CATEGORY_EQUIPMENT);
+        eqReq.setAmount(new BigDecimal("1200.00"));
+        eqReq.setAccountId(accountId);
+        eqReq.setEquipName("红冲冰柜");
+        Long expId = expenseService.create(eqReq, OP, OPERATOR);
+        // 待确认不能红冲(指路作废)
+        BizException e1 = assertThrows(BizException.class,
+                () -> expenseService.redFlush(expId, "冲一下", OP, OPERATOR));
+        assertTrue(e1.getMessage().contains("作废"), e1.getMessage());
+        expenseVoucher(expId);
+        ExpenseDtos.ExpenseRow confirmed = expenseService.confirm(expId, OP, OPERATOR);
+        assertEquals(0, accountService.balanceOf(accountId).compareTo(new BigDecimal("800.00")), "2000−1200");
+
+        Long redId = expenseService.redFlush(expId, "设备退货了,厂家原路退款", OP, OPERATOR);
+
+        assertEquals(Expense.STATUS_RED_FLUSHED, expenseMapper.selectById(expId).getExpStatus(), "原单已红冲(不删)");
+        Expense red = expenseMapper.selectById(redId);
+        assertEquals(Expense.STATUS_RED, red.getExpStatus());
+        assertEquals(expId, red.getRedFlushOf(), "红冲行回链原单");
+        assertEquals(0, red.getAmount().compareTo(new BigDecimal("-1200.00")), "负额红冲行");
+        assertTrue(red.getExpNo().startsWith("ZCR-"), red.getExpNo());
+
+        // 反向流水:同类别「收」回账户 → 余额恢复;pl_line 同杂费行净额回落
+        CashFlow reverse = cashFlowMapper.selectOne(new LambdaQueryWrapper<CashFlow>()
+                .eq(CashFlow::getRefDocType, ExpenseService.REF_DOC_TYPE)
+                .eq(CashFlow::getRefDocId, redId));
+        assertNotNull(reverse, "红冲落反向流水(钱只能被单据改)");
+        assertEquals(CashFlow.DIR_IN, reverse.getDirection());
+        assertEquals("设备购置", reverse.getCategory());
+        assertEquals(PlLine.MISC_EXPENSE.getLabel(), reverse.getPlLine(), "杂费行净额自动回落");
+        assertEquals(0, accountService.balanceOf(accountId).compareTo(new BigDecimal("2000.00")), "余额恢复");
+
+        // 设备台账行标记退回(不删,留痕)
+        Equipment equipment = equipmentMapper.selectById(confirmed.getEquipmentId());
+        assertEquals(Equipment.STATUS_RETURNED, equipment.getEquipStatus(), "台账行标[退回]");
+
+        // 一张单只能红冲一次;红冲行自身不能再红冲
+        BizException e2 = assertThrows(BizException.class,
+                () -> expenseService.redFlush(expId, "再冲", OP, OPERATOR));
+        assertTrue(e2.getMessage().contains("仅[已完成]") || e2.getMessage().contains("红冲过"), e2.getMessage());
+        BizException e3 = assertThrows(BizException.class,
+                () -> expenseService.redFlush(redId, "冲红冲行", OP, OPERATOR));
+        assertTrue(e3.getMessage().contains("红冲行"), e3.getMessage());
+    }
+
+    // ============================== ⑫ M3-9 七律修复:线下复合单一键冲销 ==============================
+
+    @Test
+    @DisplayName("M3-9七律修复:线下复合单一键冲销——三件套整体反向(负量负额红冲行+反向流水+余额退回);老板守卫+备注强制+防双冲销")
+    void offlineSaleReverse() {
+        Machine m = machine("冲销故障机M39");
+        Product p = product("冲销和其正M39");
+        Long accountId = account("微信", "0");
+        ExpenseDtos.OfflineSaleReq req = new ExpenseDtos.OfflineSaleReq();
+        req.setMachineId(m.getId());
+        req.setProductId(p.getId());
+        req.setQty(new BigDecimal("4"));
+        req.setAmount(new BigDecimal("13.20"));
+        req.setAccountId(accountId);
+        ExpenseDtos.OfflineSaleResp created = offlineSaleService.create(req, OP, OPERATOR);
+        assertEquals(0, accountService.balanceOf(accountId).compareTo(new BigDecimal("13.20")));
+
+        // 老板守卫 + 备注强制
+        BizException e0 = assertThrows(BizException.class,
+                () -> offlineSaleService.reverse(created.getSaleRecordId(), "录错了", "录单员", OP, OPERATOR));
+        assertTrue(e0.getMessage().contains("限老板角色"), e0.getMessage());
+        BizException e1 = assertThrows(BizException.class,
+                () -> offlineSaleService.reverse(created.getSaleRecordId(), " ", "老板", OP, OPERATOR));
+        assertTrue(e1.getMessage().contains("备注"), e1.getMessage());
+
+        ExpenseDtos.OfflineSaleResp reversed = offlineSaleService.reverse(
+                created.getSaleRecordId(), "顾客其实没转账,录错了", "老板", OP, OPERATOR);
+
+        // ① 冲销行:负量负额,OFFLINE-RF-<原ID>,仍线下补录+豁免标记,不入待结算
+        SaleRecord rev = saleRecordMapper.selectById(reversed.getSaleRecordId());
+        assertEquals(OfflineSaleService.REVERSE_PREFIX + created.getSaleRecordId(), rev.getOrderNo());
+        assertEquals(0, rev.getQty().compareTo(new BigDecimal("-4")));
+        assertEquals(0, rev.getAmountReceived().compareTo(new BigDecimal("-13.20")));
+        assertEquals(OfflineSaleService.ORDER_TYPE_OFFLINE, rev.getOrderType());
+        assertTrue(Boolean.TRUE.equals(rev.getOfflineFlag()));
+        assertNull(rev.getSettlementId());
+        // ② 反向流水:线下收入「支」→ 余额退回 0
+        CashFlow flow = cashFlowMapper.selectById(reversed.getCashFlowId());
+        assertEquals(CashFlow.DIR_OUT, flow.getDirection());
+        assertEquals("线下收入", flow.getCategory());
+        assertEquals(0, flow.getAmount().compareTo(new BigDecimal("13.20")));
+        assertEquals(0, accountService.balanceOf(accountId).compareTo(BigDecimal.ZERO), "钱按原路退回");
+        // ③ 原单不改写(仍在,历史留痕);列表标注 reversed
+        assertNotNull(saleRecordMapper.selectById(created.getSaleRecordId()));
+        ExpenseDtos.OfflineSaleRow originRow = offlineSaleService.listRecent(50).stream()
+                .filter(r -> r.getSaleRecordId().equals(created.getSaleRecordId()))
+                .findFirst().orElseThrow(AssertionError::new);
+        assertTrue(Boolean.TRUE.equals(originRow.getReversed()), "列表标注原单已被冲销");
+
+        // 防双冲销 + 冲销行不能再冲销
+        BizException e2 = assertThrows(BizException.class,
+                () -> offlineSaleService.reverse(created.getSaleRecordId(), "再冲一次", "老板", OP, OPERATOR));
+        assertTrue(e2.getMessage().contains("冲销过"), e2.getMessage());
+        BizException e3 = assertThrows(BizException.class,
+                () -> offlineSaleService.reverse(reversed.getSaleRecordId(), "冲冲销行", "老板", OP, OPERATOR));
+        assertTrue(e3.getMessage().contains("冲销行"), e3.getMessage());
+    }
+
     private StocktakeItem item(Long stId, Long productId, String diff, String diffAmount, String reason) {
         StocktakeItem item = new StocktakeItem();
         item.setStocktakeId(stId);

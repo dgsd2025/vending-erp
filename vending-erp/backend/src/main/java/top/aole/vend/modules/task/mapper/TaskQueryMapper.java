@@ -41,6 +41,17 @@ public interface TaskQueryMapper {
             "WHERE st_status='已完成' AND DATE_FORMAT(create_time,'%Y-%m')=#{month} AND is_deleted=0")
     int stocktakeOk(@Param("month") String month);
 
+    /** SETTLEMENT(M3-9 七律修复):当月存在已核销/已核对平台结算单(真核销才算完) */
+    @Select("SELECT COUNT(*) FROM yc_vend_settlement " +
+            "WHERE stl_status IN ('已核销','已核对') " +
+            "AND DATE_FORMAT(COALESCE(confirm_at, update_time),'%Y-%m')=#{month} AND is_deleted=0")
+    int settlementOk(@Param("month") String month);
+
+    /** CASH_CHECK(M3-9 七律修复):当月存在已完成钱盘核对记录(check_period=当月) */
+    @Select("SELECT COUNT(*) FROM yc_vend_cash_check " +
+            "WHERE check_status='已完成' AND check_period=#{month} AND is_deleted=0")
+    int cashCheckOk(@Param("month") String month);
+
     /** 员工详情:经手单据统计(op_log 按对象类型聚合,mockup p16"经手单据"卡) */
     @Select("SELECT target_type AS targetType, COUNT(*) AS cnt FROM yc_vend_op_log " +
             "WHERE user_name=#{userName} AND is_deleted=0 " +

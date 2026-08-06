@@ -422,4 +422,55 @@ class SettlementFlowTest extends BaseIntegrationTest {
                 () -> settlementService.resolveDiff(billId, "再来一次", OP, OPERATOR));
         assertEquals(2, flowsOf(billId).size());
     }
+
+    @Test
+    @DisplayName("M3-9七律修复:已核销单红冲逆向(原TODO兑现)——退回填+净额反向流水+余额原路退回+状态回待核对;老板守卫+备注强制+防双红冲")
+    void redFlushSettledBill() {
+        settleModeService.set(SettleModeService.MODE_PLATFORM, OP, OPERATOR, "老板");
+        Long acc = realAccount("0");
+        SaleRecord s1 = saleFull("60.0", "正常", "20.0", false, D1.atTime(9, 0));
+        SaleRecord s2 = saleFull("40.0", "正常", "15.0", false, D1.atTime(10, 0));
+        // 账单100 手续费5 到账95:两差全绿 → 已核销,回填 2 笔,落 2 条流水(毛额100收+手续费5支)
+        Long billId = settlementService.create(platformReq("100", "5", "95", acc), OP, OPERATOR);
+        voucher(billId);
+        SettlementDtos.ConfirmResult cr = settlementService.confirm(billId, OP, OPERATOR);
+        assertEquals(Settlement.ST_SETTLED, cr.getStlStatus());
+        assertEquals(2, cr.getBackfillCount());
+        assertEquals(0, accountService.balanceOf(acc).compareTo(new BigDecimal("95")), "净入账=实际到账");
+        assertNotNull(saleRecordMapper.selectById(s1.getId()).getSettlementId(), "销售已回填归属本单");
+
+        // 老板守卫 + 备注强制
+        BizException e0 = assertThrows(BizException.class,
+                () -> settlementService.redFlush(billId, "录错了", "录单员", OP, OPERATOR));
+        assertTrue(e0.getMessage().contains("限老板角色"), e0.getMessage());
+        BizException e1 = assertThrows(BizException.class,
+                () -> settlementService.redFlush(billId, " ", "老板", OP, OPERATOR));
+        assertTrue(e1.getMessage().contains("备注"), e1.getMessage());
+
+        SettlementDtos.RedFlushResult r = settlementService.redFlush(billId, "到账数录错:实际是 85", "老板", OP, OPERATOR);
+        assertEquals(2, r.getUnbackfillCount(), "回填整体退回");
+        assertEquals(2, r.getReverseFlowCount(), "毛额/手续费各按净额反冲一条");
+
+        Settlement after = settlementMapper.selectById(billId);
+        assertEquals(Settlement.ST_PENDING, after.getStlStatus(), "状态回待核对(可改数重新核销)");
+        assertNull(after.getConfirmAt(), "确认快照清空");
+        assertTrue(after.getDiffNote().contains("红冲逆向"), "留痕:" + after.getDiffNote());
+        assertNull(saleRecordMapper.selectById(s1.getId()).getSettlementId(), "销售重新回待结算");
+        assertNull(saleRecordMapper.selectById(s2.getId()).getSettlementId());
+        assertEquals(0, accountService.balanceOf(acc).compareTo(BigDecimal.ZERO), "钱按原路退回,余额归零");
+        // 流水净额=0(4 条:+100收 −5支 −100支 +5收),历史一条不删
+        assertEquals(4, flowsOf(billId).size(), "反向承接不删历史");
+
+        // 待核对单不能再红冲(防双红冲双退款);待核对单可作废/重录
+        BizException e2 = assertThrows(BizException.class,
+                () -> settlementService.redFlush(billId, "再冲", "老板", OP, OPERATOR));
+        assertTrue(e2.getMessage().contains("仅["), e2.getMessage());
+
+        // 在途 aging 数据口(P1-5):退回填后重新有在途,PLATFORM 出账龄
+        SettlementDtos.PendingAgingResp aging = settlementService.pendingAging();
+        assertEquals(SettleModeService.MODE_PLATFORM, aging.getMode());
+        assertNotNull(aging.getOldestDays(), "最老账龄天数可读");
+        assertEquals(35, aging.getThresholdDays());
+        assertTrue(aging.isOverdue(), "D1(2026-07-01)挂账已超 35 天阈值 → 红灯");
+    }
 }

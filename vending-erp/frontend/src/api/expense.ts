@@ -15,7 +15,7 @@ function opHeaders(extra?: Record<string, string>) {
 // ---------- 类型 ----------
 
 export const EXPENSE_CATEGORIES = ['电费', '维修', '杂支', '设备购置'] as const
-export const EQUIPMENT_STATUS = ['在用', '报废', '出售'] as const
+export const EQUIPMENT_STATUS = ['在用', '报废', '出售', '退回'] as const
 
 export interface ExpenseRow {
   id: number
@@ -27,12 +27,14 @@ export interface ExpenseRow {
   isEquipment?: boolean
   equipmentId?: number | null
   equipName?: string | null
-  expStatus: '待确认' | '已完成'
+  expStatus: '待确认' | '已完成' | '已作废' | '已红冲' | '红冲'
   bizDate: string
   bookPeriod?: string | null
   remark?: string | null
   createTime?: string
   attachmentCount: number
+  /** 非空=本行是负额红冲行(指向原支出单) */
+  redFlushOf?: number | null
 }
 
 export interface EquipmentRow {
@@ -62,6 +64,10 @@ export interface OfflineSaleRow {
   qty: number | string
   amount: number | string
   bizTime: string
+  /** 本行是冲销行(OFFLINE-RF- 负额) */
+  reversal?: boolean
+  /** 本行(原复合单)已被冲销 */
+  reversed?: boolean
 }
 
 // ---------- 支出单 ----------
@@ -84,6 +90,16 @@ export function createExpense(data: {
 /** 确认落流水:先传凭证(refType=expense)否则后端硬拒 */
 export function confirmExpense(id: number): Promise<ExpenseRow> {
   return request.post(`/v1/expenses/${id}/confirm`, {}, opHeaders())
+}
+
+/** 作废支出单(M3-9 逆向出口:仅待确认,钱没动;备注强制留痕) */
+export function voidExpense(id: number, note: string): Promise<void> {
+  return request.post(`/v1/expenses/${id}/void`, { note }, opHeaders())
+}
+
+/** 红冲支出单(已确认的唯一逆向):负额红冲行+反向流水+设备台账行标退回;备注强制 */
+export function redFlushExpense(id: number, note: string): Promise<number> {
+  return request.post(`/v1/expenses/${id}/red-flush`, { note }, opHeaders())
 }
 
 // ---------- 设备台账 ----------
@@ -115,4 +131,10 @@ export function createOfflineSale(data: {
 
 export function listOfflineSales(limit = 20): Promise<OfflineSaleRow[]> {
   return request.get('/v1/offline-sales', { params: { limit } })
+}
+
+/** 一键冲销线下复合单(M3-9):三件套整体反向;老板守卫+备注强制 */
+export function reverseOfflineSale(id: number, note: string): Promise<OfflineSaleResp> {
+  return request.post(`/v1/offline-sales/${id}/reverse`, { note },
+    opHeaders({ 'X-User-Role': encodeURIComponent('老板') }))
 }

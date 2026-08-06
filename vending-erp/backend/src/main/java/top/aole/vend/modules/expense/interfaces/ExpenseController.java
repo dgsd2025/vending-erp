@@ -49,6 +49,23 @@ public class ExpenseController {
         return R.ok(expenseService.confirm(id, UID, Operators.resolve(op)));
     }
 
+    @ApiOperation("作废支出单(M3-9 七律修复:仅待确认——钱没动;备注强制留痕)")
+    @PostMapping("/v1/expenses/{id}/void")
+    public R<Void> voidExpense(@PathVariable Long id,
+                               @RequestBody ExpenseDtos.NoteReq req,
+                               @RequestHeader(value = Operators.HEADER, required = false) String op) {
+        expenseService.voidExpense(id, req == null ? null : req.getNote(), UID, Operators.resolve(op));
+        return R.ok(null);
+    }
+
+    @ApiOperation("红冲支出单(已确认的唯一逆向):负额红冲行+反向流水+设备台账行标退回;备注强制留痕")
+    @PostMapping("/v1/expenses/{id}/red-flush")
+    public R<Long> redFlushExpense(@PathVariable Long id,
+                                   @RequestBody ExpenseDtos.NoteReq req,
+                                   @RequestHeader(value = Operators.HEADER, required = false) String op) {
+        return R.ok(expenseService.redFlush(id, req == null ? null : req.getNote(), UID, Operators.resolve(op)));
+    }
+
     // ============================== 设备台账 ==============================
 
     @ApiOperation("设备台账列表(回本进度展示,不进流水)")
@@ -81,5 +98,16 @@ public class ExpenseController {
     public R<List<ExpenseDtos.OfflineSaleRow>> listOfflineSales(
             @RequestParam(defaultValue = "20") int limit) {
         return R.ok(offlineSaleService.listRecent(limit));
+    }
+
+    @ApiOperation("一键冲销线下复合单(M3-9 七律修复):三件套整体反向(销售红冲行+反向流水);老板守卫+备注强制")
+    @PostMapping("/v1/offline-sales/{id}/reverse")
+    public R<ExpenseDtos.OfflineSaleResp> reverseOfflineSale(
+            @PathVariable Long id,
+            @RequestBody ExpenseDtos.NoteReq req,
+            @RequestHeader(value = Operators.HEADER, required = false) String op,
+            @RequestHeader(value = "X-User-Role", required = false) String role) {
+        return R.ok(offlineSaleService.reverse(id, req == null ? null : req.getNote(),
+                Operators.resolve(role), UID, Operators.resolve(op)));
     }
 }

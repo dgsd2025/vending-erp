@@ -118,6 +118,35 @@ export function voidSettlementBill(id: number): Promise<void> {
   return request.post(`/v1/settlement/bills/${id}/void`, null, opHeaders())
 }
 
+/** 已核销单红冲逆向结果 */
+export interface RedFlushResult {
+  billId: number
+  unbackfillCount: number
+  reverseFlowCount: number
+  stlStatus: string
+}
+
+/** 已核销单红冲逆向(M3-9):退回填+净额反向流水+状态回待核对;老板守卫+备注强制 */
+export function redFlushSettlementBill(id: number, note: string): Promise<RedFlushResult> {
+  return request.post(`/v1/settlement/bills/${id}/red-flush`, { note },
+    opHeaders({ 'X-User-Role': encodeURIComponent('老板') }))
+}
+
+/** 待结算最老账龄 aging(驾驶舱「超期未结算」红灯只读数据口,阈值 35 天) */
+export interface PendingAgingResp {
+  mode: SettleMode
+  pendingBalance: number | string | null
+  pendingCount: number | null
+  oldest: string | null
+  oldestDays: number | null
+  overdue: boolean
+  thresholdDays: number
+}
+
+export function pendingAging(): Promise<PendingAgingResp> {
+  return request.get('/v1/settlement/pending-aging')
+}
+
 export function exchangeRoi(from?: string, to?: string): Promise<ExchangeRoi> {
   return request.get('/v1/settlement/exchange-roi', { params: { from, to } })
 }

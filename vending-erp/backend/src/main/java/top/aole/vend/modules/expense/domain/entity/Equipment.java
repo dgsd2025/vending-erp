@@ -23,9 +23,11 @@ public class Equipment extends BaseEntity {
     public static final String STATUS_IN_USE = "在用";
     public static final String STATUS_SCRAPPED = "报废";
     public static final String STATUS_SOLD = "出售";
+    /** 退回(M3-9 七律修复:来源支出单被红冲,设备已退——台账行不删,标记留痕) */
+    public static final String STATUS_RETURNED = "退回";
 
     public static final Set<String> VALID_STATUS = new LinkedHashSet<>(Arrays.asList(
-            STATUS_IN_USE, STATUS_SCRAPPED, STATUS_SOLD));
+            STATUS_IN_USE, STATUS_SCRAPPED, STATUS_SOLD, STATUS_RETURNED));
 
     private String equipName;
 

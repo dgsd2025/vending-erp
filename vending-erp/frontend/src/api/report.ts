@@ -225,9 +225,29 @@ export interface MachineOverviewResp {
   dataAsOf: string | null
 }
 
+/** 驾驶舱钱账四灯(M3-9 七律修复,§9.3 首页亮灯):逾期应付/差异挂起聚合/索赔超期/超期未结算 */
+export interface MoneyLightsResp {
+  overduePayableCount: number
+  maxOverdueDays: number
+  diffBillCount: number
+  diffPaymentCount: number
+  diffSettlementCount: number
+  diffTotal: number
+  claimOverdueCount: number
+  claimOldestDays: number | null
+  claimThresholdDays: number
+  mode: string | null
+  settleOverdue: boolean
+  settleOldestDays: number | null
+  settlePendingBalance: number | string | null
+  settleThresholdDays: number
+  redTotal: number
+}
+
 export const reportApi = {
   grossMargin: (month: string | undefined, dim: 'sku' | 'machine') =>
     request.get<never, GrossMarginResp>('/v1/report/gross-margin', { params: { month, dim } }),
+  moneyLights: () => request.get<never, MoneyLightsResp>('/v1/report/money-lights'),
   inventorySummary: (month?: string) =>
     request.get<never, InventorySummaryResp>('/v1/report/inventory-summary', { params: { month } }),
   stock: () => request.get<never, StockResp>('/v1/report/stock'),
