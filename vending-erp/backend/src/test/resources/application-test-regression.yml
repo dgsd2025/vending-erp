@@ -7,7 +7,9 @@ spring:
     username: root
     password: vend123
 
-# 导入归档到 target 下,clean 时一起清
+# 导入/凭证归档到 target 下,clean 时一起清
 vend:
   import:
     storage-dir: target/test-regression-storage
+  attach:
+    storage-dir: target/test-regression-attachments

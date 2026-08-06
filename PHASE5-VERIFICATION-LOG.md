@@ -128,3 +128,12 @@ mysql: healthy
   - 8096 curl:建账户→期初500→改期初被拒(报错指向资金调整单)→穿越名传凭证(归档名 ATT-uuid.png)→流水空表结构/pl-summary/settle-mode UNSET 横幅 全通
   - 前端 pnpm build ✓;浏览器真建「现金-柜台备用金」期初200锁定,console 0 错
 - 坑:zsh 不分词 curl 头变量(逐个 -H 写)/ @Update 别写成 @Select / spring-boot:run 用 SERVER_PORT 环境变量覆盖 8081→8096(yml 未参数化)
+
+## M3-4 · 索赔 + 杂费/设备 + 线下收入复合单(P2-13)(2026-08-06)
+
+- 范围:`modules/claim/`(生命周期 申请中→到账[赔付凭证硬门禁+落流水 其他收入-赔付+回填 cash_flow_id]/放弃[备注必填] · 索赔应收接口[=Σ申请中,资产快照 M3-6 取数口] · 净损耗接口[损耗−已获赔])+ `modules/expense/`(支出单 待确认→传凭证→确认落流水杂费行 · 设备购置同步建 equipment 台账 · 线下收入复合单三件套原子:sale_record 线下补录/OFFLINE-/豁免标记 + cash_flow 其他收入-平台外)+ V1.0.9(claim.remark/expense.equip_name)+ 前端 ClaimPanel/ExpensePanel/OfflineSaleDialog 三组件 + Stocktake 五步向导第4步索赔入口点亮 + Scenario05/06 四条 @Disabled 全开
+- 证据(全文见 `verification/M3-4.md`):
+  - 集成测试 `ClaimExpenseOfflineTest` **10/10 绿**(vend_test_claim 独立库);Scenario05 4/4 + Scenario06 5/5(0 skip);全仓回归 **252 绿**(0 失败,4 skip 均他票 M3-pending)
+  - 8098 curl:索赔发起→应收35→无凭证到账被拒→传凭证→到账30(流水 其他收入-赔付+回填)→应收0;支出单无凭证确认被拒→确认落流水(杂费行)+设备进台账;线下复合单 OFFLINE- 单号+流水 其他收入-平台外 13.2
+  - 前端 pnpm build ✓;浏览器 /money-lab 三组件真走(发起/放弃留痕/应收 chip 实时 · 支出录入+台账编辑 · 复合单一次录入 SQL 复核 #5141)+ /stocktake 渲染,console 0 错
+- 坑:基座契约=只发 MoneyPostingEvent(写手包私有);测试外层事务下内层回滚不可见→断言 TestTransaction.isFlaggedForRollback;并行票共用 target//浏览器 tab 抢占→终验用 -Dmaven.build.directory 独立目录+computer 带 tabId;el-dialog 点 overlay 即关(重复点按钮误关弹窗);/money-lab 为 dev 临时验证台,M3-7 装配 p7 后删
