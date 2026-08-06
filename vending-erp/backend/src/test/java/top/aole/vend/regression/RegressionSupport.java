@@ -30,9 +30,10 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 /**
  * M1-8 穿行审计 14 场景回归套件基类(vend_test_regression 独立库,Flyway 自迁,每例事务回滚)。
  *
- * 场景来源:穿行审计报告-断点卡点逻辑错误.md(14 场景)+ DESIGN_DOC ④(场景→表/字段映射)+ ⑤口径。
- * 约定:M1 已落地的链路端到端真测(建档→单据→导入→库存→报表);
- *       依赖 M2 盘点/M3 钱账的断言 @Disabled 并注明缺什么、挂哪个里程碑。
+ * 场景来源:穿行审计报告-断点卡点逻辑错误.md(14 场景)+ DESIGN_DOC ④(场景→表/字段映射)+ ⑤口径
+ *          + M2 新增场景15-17(补货闭环/盘点闭环/慢销与容量,M2-8 回归收口)。
+ * 约定:M1/M2 已落地的链路端到端真测(建档→单据→导入→库存→补货→盘点→任务→报表);
+ *       依赖 M3 钱账的断言 @Disabled 并注明缺什么、挂哪个里程碑(M2 断言已全部打开)。
  */
 @ActiveProfiles("test-regression")
 public abstract class RegressionSupport extends BaseIntegrationTest {

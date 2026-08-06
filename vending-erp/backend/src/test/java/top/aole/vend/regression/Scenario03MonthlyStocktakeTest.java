@@ -13,6 +13,11 @@ import top.aole.vend.modules.doc.mapper.DocHeadMapper;
 import top.aole.vend.modules.doc.service.DocService;
 import top.aole.vend.modules.stock.domain.entity.StockLedger;
 import top.aole.vend.modules.stock.mapper.StockLedgerMapper;
+import top.aole.vend.modules.stocktake.domain.entity.Stocktake;
+import top.aole.vend.modules.stocktake.domain.entity.StocktakeItem;
+import top.aole.vend.modules.stocktake.dto.StocktakeDtos;
+import top.aole.vend.modules.stocktake.mapper.StocktakeMapper;
+import top.aole.vend.modules.stocktake.service.StocktakeService;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -34,6 +39,10 @@ class Scenario03MonthlyStocktakeTest extends RegressionSupport {
     private DocHeadMapper docHeadMapper;
     @Autowired
     private StockLedgerMapper ledgerMapper;
+    @Autowired
+    private StocktakeService stocktakeService;
+    @Autowired
+    private StocktakeMapper stocktakeMapper;
 
     @Test
     @DisplayName("资金调整单(P1-7 钱盘差异唯一出口):建单→提交→确认→完成 状态机全通;确认不写库存流水")
@@ -89,6 +98,57 @@ class Scenario03MonthlyStocktakeTest extends RegressionSupport {
         assertTableExists("yc_vend_stocktake");
         assertTableExists("yc_vend_stocktake_item");
         assertColumn("yc_vend_stocktake_item", "diff_reason");
+    }
+
+    @Test
+    @DisplayName("M2 升级:月盘货侧闭环端到端——盘点单驱动 盘盈+2/盘亏−2 自动过账,库存=实盘,差异按加权成本计价")
+    void monthlyStocktakeEndToEndViaService() {
+        Product a = product("月盘盘盈品", null, null);
+        Product b = product("月盘盘亏品", null, null);
+        stockWarehouse(a.getId(), "10");
+        stockWarehouse(b.getId(), "5");
+
+        // 创建(系统快照账面)→ 录差异(整包)→ 提交 → 确认(自动生成盘盈/盘亏单并过账)
+        StocktakeDtos.CreateReq createReq = new StocktakeDtos.CreateReq();
+        createReq.setScopeType(Stocktake.SCOPE_WAREHOUSE);
+        createReq.setSourceTask("月度盘点");
+        Long stId = stocktakeService.create(createReq, OP);
+
+        StocktakeDtos.SaveItemsReq saveReq = new StocktakeDtos.SaveItemsReq();
+        StocktakeDtos.ItemReq r1 = new StocktakeDtos.ItemReq();
+        r1.setProductId(a.getId());
+        r1.setActualQty(new BigDecimal("12"));
+        r1.setDiffReason(StocktakeItem.REASON_COUNT_ERROR);
+        StocktakeDtos.ItemReq r2 = new StocktakeDtos.ItemReq();
+        r2.setProductId(b.getId());
+        r2.setActualQty(new BigDecimal("3"));
+        r2.setDiffReason(StocktakeItem.REASON_EXPIRE);
+        saveReq.getRows().add(r1);
+        saveReq.getRows().add(r2);
+        stocktakeService.saveItems(stId, saveReq, OP);
+        stocktakeService.submit(stId, OP);
+        StocktakeDtos.ConfirmResp resp = stocktakeService.confirm(stId, OP, "员工", false, null);
+
+        // 盘盈/盘亏两单自动生成并已过账
+        assertNotNull(resp.getGainDocId(), "盘盈单自动生成");
+        assertNotNull(resp.getLossDocId(), "盘亏单自动生成");
+        assertEquals(DocType.GAIN_IN, docHeadMapper.selectById(resp.getGainDocId()).getDocType());
+        assertEquals(DocType.LOSS_OUT, docHeadMapper.selectById(resp.getLossDocId()).getDocType());
+        assertEquals(DocStatus.CONFIRMED, docHeadMapper.selectById(resp.getGainDocId()).getDocStatus());
+        assertEquals(DocStatus.CONFIRMED, docHeadMapper.selectById(resp.getLossDocId()).getDocStatus());
+        // 库存=实盘
+        assertEquals(0, stockService.getWarehouseStock(a.getId()).compareTo(new BigDecimal("12")),
+                "盘盈过账:仓库账修正到实盘 12");
+        assertEquals(0, stockService.getWarehouseStock(b.getId()).compareTo(new BigDecimal("3")),
+                "盘亏过账:仓库账修正到实盘 3");
+        // 差异按加权成本计价(3.5):盘盈 +7 / 盘亏 −7
+        assertEquals(0, resp.getGainAmount().compareTo(new BigDecimal("7.00")), "盘盈金额=+2×3.5");
+        assertEquals(0, resp.getLossAmount().compareTo(new BigDecimal("-7.00")), "盘亏金额=−2×3.5");
+        // 盘点单终态 + 双单挂接(月盘留档)
+        Stocktake st = stocktakeMapper.selectById(stId);
+        assertEquals(Stocktake.ST_DONE, st.getStStatus());
+        assertEquals(resp.getGainDocId(), st.getGainDocId());
+        assertEquals(resp.getLossDocId(), st.getLossDocId());
     }
 
     @Test

@@ -10,6 +10,7 @@ import top.aole.vend.modules.basedata.interfaces.Operators;
 import top.aole.vend.modules.replenish.service.ReplenishEngine;
 
 import java.time.LocalDate;
+import java.util.List;
 import java.util.Map;
 
 /**
@@ -67,6 +68,12 @@ public class ReplenishController {
                            @RequestHeader(value = Operators.HEADER, required = false) String userName) {
         engine.setIgnored(id, false, Operators.resolve(userName));
         return R.ok();
+    }
+
+    @ApiOperation("清仓残余提示(只读):清仓中仓库>0 超30天 → 三选一(退供/报损/换机促销)")
+    @GetMapping("/clearance-alerts")
+    public R<List<Map<String, Object>>> clearanceAlerts() {
+        return R.ok(engine.clearanceAlerts());
     }
 
     @ApiOperation("🔬 过程详情:公式与输入值快照 + AI 透明四件套(推理/输出/置信/原始数据)")

@@ -31,9 +31,14 @@ import top.aole.vend.modules.stock.service.StockService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDate;
+import java.time.temporal.ChronoUnit;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -60,6 +65,12 @@ public class ReplenishEngine {
     public static final String STATUS_PENDING = "建议";
     public static final String STATUS_IGNORED = "已忽略";
     public static final String SCENE = "补货解释";
+
+    /** 清仓残余提示阈值:进入清仓中超过 N 天仓库还有货 → 三选一提示(穿行场景9 M2 段) */
+    public static final int CLEARANCE_ALERT_DAYS = 30;
+    /** 清仓残余三选一固定出路(P2-10 死锁解除的三条腿) */
+    public static final List<String> CLEARANCE_CHOICES =
+            Collections.unmodifiableList(Arrays.asList("退供", "报损", "换机促销"));
 
     private final DemandStatsService demandStatsService;
     private final ReplenishPlanMapper planMapper;
@@ -427,6 +438,49 @@ public class ReplenishEngine {
         plan.setPlanStatus("已采纳");
         planMapper.updateById(plan);
         opLogService.record(operator, "采纳建议", "replenish_plan", planId, STATUS_PENDING, "已采纳");
+    }
+
+    /**
+     * 清仓残余提示(只读,穿行场景9 M2 段):清仓中 + 仓库>0 + 超 30 天 →
+     * 三选一提示(退供/报损/换机促销)。不落库不改状态,由驾驶舱/建议页轮询展示。
+     */
+    public List<Map<String, Object>> clearanceAlerts() {
+        List<Product> clearing = productMapper.selectList(new LambdaQueryWrapper<Product>()
+                .eq(Product::getProductStatus, "清仓中"));
+        if (clearing.isEmpty()) {
+            return Collections.emptyList();
+        }
+        Set<Long> ids = new LinkedHashSet<>();
+        for (Product p : clearing) {
+            ids.add(p.getId());
+        }
+        Map<Long, BigDecimal> warehouse = stockService.getWarehouseStockBatch(ids);
+        LocalDate today = LocalDate.now();
+        List<Map<String, Object>> alerts = new ArrayList<>();
+        for (Product p : clearing) {
+            BigDecimal wh = nz(warehouse.get(p.getId()));
+            if (wh.signum() <= 0 || p.getClearanceSince() == null) {
+                continue; // 货已出清 / 无计时起点:不催
+            }
+            long days = ChronoUnit.DAYS.between(p.getClearanceSince(), today);
+            if (days <= CLEARANCE_ALERT_DAYS) {
+                continue; // 30 天缓冲期内先让自然销售消化
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("productId", p.getId());
+            row.put("skuCode", p.getSkuCode());
+            row.put("productName", p.getProductName());
+            row.put("warehouseQty", wh);
+            row.put("clearanceSince", p.getClearanceSince().toString());
+            row.put("daysInClearance", days);
+            row.put("choices", CLEARANCE_CHOICES);
+            row.put("message", String.format(
+                    "「%s」进入清仓已 %d 天,仓库还压着 %s %s——请三选一处理:退供 / 报损 / 换机促销",
+                    p.getProductName(), days, trim0(wh),
+                    p.getUnit() == null ? "件" : p.getUnit()));
+            alerts.add(row);
+        }
+        return alerts;
     }
 
     /** 🔬 过程详情:公式快照 + llm_call_log 透明四件套 */
