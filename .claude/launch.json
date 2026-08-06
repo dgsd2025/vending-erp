@@ -2,96 +2,10 @@
   "version": "0.0.1",
   "configurations": [
     {
-      "name": "vend-frontend",
-      "runtimeExecutable": "env",
-      "runtimeArgs": [
-        "VITE_PROXY_TARGET=http://127.0.0.1:8083",
-        "pnpm",
-        "--dir",
-        "/Users/yh-1/系统开发/智慧园区/vending-erp/frontend",
-        "dev"
-      ],
-      "port": 5174
-    },
-    {
-      "name": "vend-frontend-m17",
-      "runtimeExecutable": "env",
-      "runtimeArgs": [
-        "VITE_PROXY_TARGET=http://127.0.0.1:8086",
-        "pnpm",
-        "--dir",
-        "/Users/yh-1/系统开发/智慧园区/vending-erp/frontend",
-        "dev",
-        "--port",
-        "5176",
-        "--strictPort"
-      ],
-      "port": 5176
-    },
-    {
-      "name": "vend-frontend-m2-replenish",
-      "runtimeExecutable": "env",
-      "runtimeArgs": [
-        "VITE_PROXY_TARGET=http://127.0.0.1:8089",
-        "pnpm",
-        "--dir",
-        "/Users/yh-1/系统开发/智慧园区/vending-erp/frontend",
-        "dev",
-        "--port",
-        "5180",
-        "--strictPort"
-      ],
-      "port": 5180
-    },
-    {
-      "name": "vend-frontend-m2-task",
-      "runtimeExecutable": "env",
-      "runtimeArgs": [
-        "VITE_PROXY_TARGET=http://127.0.0.1:8091",
-        "pnpm",
-        "--dir",
-        "/Users/yh-1/系统开发/智慧园区/vending-erp/frontend",
-        "dev",
-        "--port",
-        "5182",
-        "--strictPort"
-      ],
-      "port": 5182
-    },
-    {
-      "name": "vend-frontend-m2-stocktake",
-      "url": "http://localhost:5181",
-      "port": 5181
-    },
-    {
-      "name": "vend-frontend-m2-prekit",
-      "runtimeExecutable": "env",
-      "runtimeArgs": [
-        "VITE_PROXY_TARGET=http://127.0.0.1:8092",
-        "pnpm",
-        "--dir",
-        "/Users/yh-1/系统开发/智慧园区/vending-erp/frontend",
-        "dev",
-        "--port",
-        "5183",
-        "--strictPort"
-      ],
-      "port": 5183
-    },
-    {
-      "name": "vend-frontend-m110",
-      "runtimeExecutable": "env",
-      "runtimeArgs": [
-        "VITE_PROXY_TARGET=http://127.0.0.1:8088",
-        "pnpm",
-        "--dir",
-        "/Users/yh-1/系统开发/智慧园区/vending-erp/frontend",
-        "dev",
-        "--port",
-        "5179",
-        "--strictPort"
-      ],
-      "port": 5179
+      "name": "vend-frontend-5187",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": ["-c", "cd /Users/yh-1/系统开发/智慧园区/vending-erp/frontend && VITE_PROXY_TARGET=http://127.0.0.1:8096 pnpm dev --port 5187"],
+      "port": 5187
     }
   ]
 }

@@ -119,3 +119,12 @@ mysql: healthy
   - SQL:yc_vend_task_instance 5 行(3 逾期/1 系统校验/1 手动补标);op_log 转派行 after_json 含 from/to/reason
   - 前端 pnpm build ✓;浏览器 /tasks、/staff/小邱、驾驶舱卡 console 0 错
 - 坑:uk_user_role 含 user_id(SSO 前按人名 hash 伪 ID)/ 并行票 target/ 争用(8091 用独立 jar)/ 配人前实例需 backfill / weekView 先标逾期再取数 / flyway out-of-order 兼容并行票版本号
+
+## M3-1 · 钱账基座(账户/CashFlowWriter/pl_line/凭证/settle.mode)(2026-08-06)
+
+- 范围:`modules/money/`(Account CRUD+期初一次锁 · CashFlowWriter 包私有唯一写手(事件驱动 MoneyPostingEvent)· pl_line 由 16 类别唯一推导 · 凭证通用件(服务端归档名防穿越)· settle.mode 三档配置)+ V1.0.7(yc_vend_config)+ `components/money/AccountTab.vue` 点亮设置中心资金账户 Tab
+- 证据(全文见 `verification/M3-1.md`):
+  - 集成测试 `MoneyFoundationTest` **10/10 绿**(vend_test_money 独立库);全仓回归 **222 绿**(基线 212+10,0 失败)
+  - 8096 curl:建账户→期初500→改期初被拒(报错指向资金调整单)→穿越名传凭证(归档名 ATT-uuid.png)→流水空表结构/pl-summary/settle-mode UNSET 横幅 全通
+  - 前端 pnpm build ✓;浏览器真建「现金-柜台备用金」期初200锁定,console 0 错
+- 坑:zsh 不分词 curl 头变量(逐个 -H 写)/ @Update 别写成 @Select / spring-boot:run 用 SERVER_PORT 环境变量覆盖 8081→8096(yml 未参数化)
