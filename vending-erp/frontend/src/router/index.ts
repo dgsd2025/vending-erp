@@ -11,6 +11,7 @@ const router = createRouter({
     { path: '/machines/:id', name: 'machine-detail', meta: { title: '机器详情' }, component: () => import('@/views/MachineDetail.vue') },
     { path: '/purchase', name: 'purchase', meta: { title: '采购' }, component: () => import('@/views/Purchase.vue') },
     { path: '/inventory', name: 'inventory', meta: { title: '库存' }, component: () => import('@/views/Inventory.vue') },
+    { path: '/stocktake', name: 'stocktake', meta: { title: '盘点' }, component: () => import('@/views/Stocktake.vue') },
     { path: '/reports', name: 'reports', meta: { title: '报表' }, component: () => import('@/views/Reports.vue') },
     { path: '/settings', name: 'settings', meta: { title: '设置中心' }, component: () => import('@/views/Settings.vue') },
     { path: '/tasks', name: 'tasks', meta: { title: '任务日历' }, component: () => import('@/views/TaskCalendar.vue') },

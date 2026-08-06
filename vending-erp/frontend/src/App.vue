@@ -23,7 +23,7 @@ const groups: { label?: string; items: { path?: string; ico: string; title: stri
       { path: '/import', ico: '📥', title: '导入中心' },
       { path: '/purchase', ico: '🚛', title: '采购入库' },
       { path: '/inventory', ico: '📦', title: '库存管理' },
-      { ico: '📋', title: '盘点', milestone: 'M2' },
+      { path: '/stocktake', ico: '📋', title: '盘点' },
     ],
   },
   {
