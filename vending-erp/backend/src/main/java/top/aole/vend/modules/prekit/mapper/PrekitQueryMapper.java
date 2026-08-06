@@ -55,25 +55,26 @@ public interface PrekitQueryMapper {
     List<Map<String, Object>> earliestInboundDates(@Param("productIds") Collection<Long> productIds);
 
     /**
-     * 核销取数:某机器在 [from, to] 业务日窗口内、导入生成且已确认的出库上架单,按 SKU 汇总实上架量。
+     * 核销取数(盲审 P0-1 · 1:1 占用制):某机器在 [from, to] 业务日窗口内、导入生成且已确认、
+     * 且**尚未被任何配货单核销占用**(未被 verify_doc_id 引用)的出库上架单里,
+     * 取业务日距配货日最近的一张(平局取 id 小的)。一张转移单只授信给一张配货单。
      */
-    @Select("SELECT di.product_id AS productId, COALESCE(SUM(di.qty),0) AS loadedQty " +
-            "FROM yc_vend_doc_head dh JOIN yc_vend_doc_item di ON di.doc_id = dh.id AND di.is_deleted=0 " +
-            "WHERE dh.is_deleted=0 AND dh.doc_type='出库上架' AND dh.doc_source='导入' AND dh.doc_status='已确认' " +
-            "AND dh.machine_id=#{machineId} AND dh.biz_date BETWEEN #{from} AND #{to} " +
-            "GROUP BY di.product_id")
-    List<Map<String, Object>> importedLoadedByMachine(@Param("machineId") Long machineId,
-                                                      @Param("from") LocalDate from,
-                                                      @Param("to") LocalDate to);
-
-    /** 核销取数:窗口内首张匹配的导入转移单 ID(落 verify_doc_id 供追溯) */
     @Select("SELECT dh.id FROM yc_vend_doc_head dh " +
             "WHERE dh.is_deleted=0 AND dh.doc_type='出库上架' AND dh.doc_source='导入' AND dh.doc_status='已确认' " +
             "AND dh.machine_id=#{machineId} AND dh.biz_date BETWEEN #{from} AND #{to} " +
-            "ORDER BY dh.id LIMIT 1")
-    Long firstImportDocId(@Param("machineId") Long machineId,
-                          @Param("from") LocalDate from,
-                          @Param("to") LocalDate to);
+            "AND NOT EXISTS (SELECT 1 FROM yc_vend_prekit_ticket t WHERE t.verify_doc_id = dh.id) " +
+            "ORDER BY ABS(DATEDIFF(dh.biz_date, #{planDate})), dh.id LIMIT 1")
+    Long pickUnoccupiedImportDocId(@Param("machineId") Long machineId,
+                                   @Param("from") LocalDate from,
+                                   @Param("to") LocalDate to,
+                                   @Param("planDate") LocalDate planDate);
+
+    /** 核销取数:单张转移单按 SKU 汇总实上架量(只看被占用的那一张,不再跨单汇总) */
+    @Select("SELECT di.product_id AS productId, COALESCE(SUM(di.qty),0) AS loadedQty " +
+            "FROM yc_vend_doc_item di " +
+            "WHERE di.doc_id=#{docId} AND di.is_deleted=0 " +
+            "GROUP BY di.product_id")
+    List<Map<String, Object>> loadedByDoc(@Param("docId") Long docId);
 
     /** 转移单列表(出库上架/退库,带机器名/来源/状态/冲抵指向;p5 转移单卡) */
     @Select("SELECT dh.id, dh.doc_no AS docNo, dh.doc_type AS docType, dh.doc_status AS docStatus, " +

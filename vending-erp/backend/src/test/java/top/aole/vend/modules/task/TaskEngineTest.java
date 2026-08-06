@@ -171,6 +171,47 @@ class TaskEngineTest extends BaseIntegrationTest {
     }
 
     @Test
+    @DisplayName("④b 冤枉红灯修复(P1-2):昨日真有导入批次,补物化的昨日实例应绿(系统校验✅)不应红")
+    void backfilledPastDayRunsOwnDayCheckBeforeOverdue() {
+        // 昨日"系统真收到文件"的证据:成功导入批次,create_time 回拨到昨天
+        ImportBatch batch = new ImportBatch();
+        batch.setBatchNo("TB-" + System.nanoTime());
+        batch.setFileName("test-昨日出货明细.xlsx");
+        batch.setFileType(ImportBatch.TYPE_SALE);
+        batch.setBatchStatus(ImportBatch.STATUS_IMPORTED);
+        batch.setRowTotal(1);
+        batch.setRowOk(1);
+        batch.setCreateTime(java.time.LocalDateTime.now().minusDays(1));
+        importBatchMapper.insert(batch);
+
+        // 对照组:一个昨日没有任何校验证据的每日任务(REPLENISH,昨日无出库上架单)
+        TaskDtos.TaskDefReq defReq = new TaskDtos.TaskDefReq();
+        defReq.setTaskName("P1-2对照巡检");
+        defReq.setCycleType(RoutineTask.CYCLE_DAILY);
+        defReq.setCheckType(RoutineTask.CHECK_REPLENISH);
+        defReq.setEnabled(true);
+        taskService.createDef(defReq, "测试员");
+
+        // 周视图补物化路径:昨日实例此刻才生成,随后 markOverdue 定罪前必须先跑"昨日"的校验
+        taskService.weekView(today.minusDays(6), today);
+
+        TaskInstance imported = instOf("daily_import", today.minusDays(1));
+        assertNotNull(imported, "昨日导数据实例已补物化");
+        assertEquals(TaskInstance.STATUS_DONE, imported.getInstanceStatus(),
+                "昨日真导了数据 → 补物化实例必须绿灯,不许冤枉成逾期");
+        assertEquals(TaskInstance.DONE_AUTO, imported.getDoneType(), "完成方式=系统校验✅(不是黄标)");
+        assertEquals("系统", imported.getDoneBy());
+
+        // 对照:昨日确实没干活的任务,照旧红灯——尺子没有放松
+        TaskInstance control = taskInstanceMapper.selectOne(new LambdaQueryWrapper<TaskInstance>()
+                .eq(TaskInstance::getTaskName, "P1-2对照巡检")
+                .eq(TaskInstance::getTaskDate, today.minusDays(1)));
+        assertNotNull(control, "对照任务昨日实例已补物化");
+        assertEquals(TaskInstance.STATUS_OVERDUE, control.getInstanceStatus(),
+                "昨日没证据的任务仍然必须标逾期(校验不过才定罪)");
+    }
+
+    @Test
     @DisplayName("⑤ 转派留痕:from/to/原因写进 op_log,实例责任人更新,已完成不许转")
     void transferLeavesTrace() {
         userRoleMapper.insert(role("小邱", UserRole.ROLE_CLERK));

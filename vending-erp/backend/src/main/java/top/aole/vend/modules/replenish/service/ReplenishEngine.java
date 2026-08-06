@@ -242,8 +242,17 @@ public class ReplenishEngine {
                 machineTotal.merge(e.getKey(), e.getValue().max(BigDecimal.ZERO), BigDecimal::add);
             }
         }
+        // 盲审 P1-3:遍历"在售 SKU 全集",不只窗口内有销量的 SKU——
+        // 五六周才卖一件的商品 28 天颗粒无收就会从 snap.global 消失,恰恰是慢销 min/max
+        // 最该兜住的对象;无统计的按空序列构造 avgDaily=0 的 DemandStats,走慢销分支。
+        Set<Long> onSaleIds = new LinkedHashSet<>();
+        for (Product p : products.values()) {
+            if ("在售".equals(p.getProductStatus())) {
+                onSaleIds.add(p.getId());
+            }
+        }
         // 仓库现存(批量) + 在途
-        Map<Long, BigDecimal> warehouse = stockService.getWarehouseStockBatch(snap.global.keySet());
+        Map<Long, BigDecimal> warehouse = stockService.getWarehouseStockBatch(onSaleIds);
         Map<Long, BigDecimal> inTransit = new HashMap<>();
         for (Map<String, Object> row : purchaseOrderService.inTransitAll()) {
             inTransit.put(((Number) row.get("productId")).longValue(),
@@ -251,12 +260,13 @@ public class ReplenishEngine {
         }
 
         int rows = 0;
-        for (Map.Entry<Long, DemandStats> e : snap.global.entrySet()) {
-            Long productId = e.getKey();
-            DemandStats stats = e.getValue();
-            Product product = products.get(productId);
-            if (product == null || !"在售".equals(product.getProductStatus())) {
-                continue; // 清仓中禁采购
+        for (Long productId : onSaleIds) {
+            Product product = products.get(productId); // onSaleIds 出自 products,必非空且在售
+            DemandStats stats = snap.global.get(productId);
+            if (stats == null) {
+                // 窗口内零销量:空序列构造(avgDaily=0/σ=0/满窗样本),isSlow()=true → 慢销 min/max 兜底
+                stats = DemandStatsService.buildStats(productId, null, Collections.emptyMap(), null,
+                        snap.asOf.minusDays(DemandStats.WINDOW_DAYS - 1L), snap.asOf);
             }
             if (handledKeys.contains(key(TYPE_PURCHASE, null, productId))) {
                 continue;

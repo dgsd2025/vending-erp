@@ -189,17 +189,34 @@ public class TaskService {
         return passed;
     }
 
-    /** 把今日之前仍"待办"的实例标为逾期(次日红灯) */
+    /**
+     * 把今日之前仍"待办"的实例标为逾期(次日红灯)。
+     *
+     * 盲审 P1-2:定罪前先跑**对应日期**的系统校验——补物化的过去日实例(比如周一干了活但
+     * 没人打开过日历,周二补生成)若当日校验能过(活其实干了),按"系统校验✅"补完成;
+     * 没过才标逾期。逾期和完成用同一把尺子,不冤枉干了活的员工。
+     *
+     * @return 实际标成逾期的实例数(校验补过的不算)
+     */
     @Transactional
     public int markOverdue(LocalDate today) {
         List<TaskInstance> stale = taskInstanceMapper.selectList(new LambdaQueryWrapper<TaskInstance>()
                 .lt(TaskInstance::getTaskDate, today)
                 .eq(TaskInstance::getInstanceStatus, TaskInstance.STATUS_TODO));
+        int overdue = 0;
         for (TaskInstance inst : stale) {
-            inst.setInstanceStatus(TaskInstance.STATUS_OVERDUE);
+            if (runCheck(inst.getCheckType(), inst.getTaskDate())) {
+                inst.setInstanceStatus(TaskInstance.STATUS_DONE);
+                inst.setDoneType(TaskInstance.DONE_AUTO);
+                inst.setDoneTime(LocalDateTime.now());
+                inst.setDoneBy("系统");
+            } else {
+                inst.setInstanceStatus(TaskInstance.STATUS_OVERDUE);
+                overdue++;
+            }
             taskInstanceMapper.updateById(inst);
         }
-        return stale.size();
+        return overdue;
     }
 
     // =====================================================================

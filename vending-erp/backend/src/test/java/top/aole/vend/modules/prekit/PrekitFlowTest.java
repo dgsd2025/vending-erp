@@ -335,6 +335,61 @@ class PrekitFlowTest extends RegressionSupport {
     }
 
     @Test
+    @DisplayName("P0-1 回归:同机连续两日两张配货单+两批导入 → 1:1 占用各自核销到自己那批,带回率各自正确")
+    void dailyShiftTwoTicketsVerifyEachAgainstOwnBatch() throws Exception {
+        Machine m = machine("PK连班机");
+        Product p = product("班次苏打水", "RG7005001", null);
+        alias("RG7005001", "班次苏打水500ml", p.getId());
+        stockWarehouse(p.getId(), "60");
+
+        LocalDate d1 = LocalDate.now().minusDays(1); // 第一天班次
+        LocalDate d2 = LocalDate.now();              // 第二天班次
+
+        // 第一天:配货单带出 10,次日(d2)导入上架 10 → 全配,带回率 0
+        ReplenishPlan pl1 = plan(m.getId(), p.getId(), "10", d1);
+        Long ticket1 = prekitService.generate(genReq(pl1), OPERATOR).getTicketIds().get(0);
+        prekitService.execute(ticket1, OPERATOR);
+        ImportDtos.CommitResp r1 = importFile(ImportBatch.TYPE_REPLENISH, repFile(new Object[][]{
+                {machineDevice(m), 1, "班次苏打水500ml", "RG7005001", 0, 10, 10, "小邱",
+                        d2 + " 09:00:00"},
+        }));
+        assertEquals(1, r1.getDocsCreated());
+        assertEquals(1, r1.getPrekitVerified(), "第一批导入只核销第一张配货单");
+
+        // 第二天:配货单带出 10,次日(d2+1)导入上架 8 → 有差异,带回 2
+        ReplenishPlan pl2 = plan(m.getId(), p.getId(), "10", d2);
+        Long ticket2 = prekitService.generate(genReq(pl2), OPERATOR).getTicketIds().get(0);
+        prekitService.execute(ticket2, OPERATOR);
+        ImportDtos.CommitResp r2 = importFile(ImportBatch.TYPE_REPLENISH, repFile(new Object[][]{
+                {machineDevice(m), 1, "班次苏打水500ml", "RG7005001", 0, 8, 8, "小邱",
+                        d2.plusDays(1) + " 09:00:00"},
+        }));
+        assertEquals(1, r2.getDocsCreated());
+        assertEquals(1, r2.getPrekitVerified(), "第二批导入只核销第二张配货单(第一张已核销不重算)");
+
+        // 第一张:自己那批(上架10)→ 已核销,带回率 0——不被第二批污染
+        PrekitTicket t1 = ticketMapper.selectById(ticket1);
+        assertEquals(PrekitTicket.STATUS_VERIFIED, t1.getTicketStatus());
+        assertEquals(0, t1.getTakebackRate().compareTo(BigDecimal.ZERO), "第一天全配带回率=0");
+        assertEquals(0, itemsOf(ticket1).get(0).getQtyLoaded().compareTo(new BigDecimal("10")),
+                "第一张上架量=自己那批的 10,不是两批总和 18");
+
+        // 第二张:自己那批(上架8)→ 有差异,带回 2,带回率 0.2——修复前会拿两批总和 18 算成 0
+        PrekitTicket t2 = ticketMapper.selectById(ticket2);
+        assertEquals(PrekitTicket.STATUS_DIFF, t2.getTicketStatus(), "第二天少上 2 件必须亮「有差异」");
+        assertEquals(0, t2.getTakebackRate().compareTo(new BigDecimal("0.2000")),
+                "带回率 = 2/10 = 0.2(窗口重复计数会把它算成 0)");
+        assertEquals(0, itemsOf(ticket2).get(0).getQtyLoaded().compareTo(new BigDecimal("8")));
+        assertEquals(0, itemsOf(ticket2).get(0).getQtyTakeback().compareTo(new BigDecimal("2")));
+
+        // 1:1 占用:两张配货单各占一张转移单,绝不共享
+        assertNotNull(t1.getVerifyDocId());
+        assertNotNull(t2.getVerifyDocId());
+        assertNotEquals(t1.getVerifyDocId(), t2.getVerifyDocId(),
+                "一张转移单只授信一张配货单(verify_doc_id 唯一占用)");
+    }
+
+    @Test
     @DisplayName("手工转移单兜底:出库上架确认后=预挂单只锁仓库侧(P0-4 不破),成本=全期加权")
     void manualTransferEntryBecomesPrePending() {
         Machine m = machine("PK手工机");

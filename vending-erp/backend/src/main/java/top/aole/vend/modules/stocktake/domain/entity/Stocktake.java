@@ -24,6 +24,8 @@ public class Stocktake extends BaseEntity {
 
     public static final String ST_IN_PROGRESS = "进行中";
     public static final String ST_PENDING = "待确认";
+    /** 确认抢占中间态(盲审 P1-1):confirm 开头条件 UPDATE 抢到才继续;事务内瞬态,提交时变已完成/回滚回待确认 */
+    public static final String ST_CONFIRMING = "处理中";
     public static final String ST_DONE = "已完成";
     public static final String ST_VOID = "已作废";
 

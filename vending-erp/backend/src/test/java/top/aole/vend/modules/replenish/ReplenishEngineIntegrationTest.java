@@ -226,6 +226,35 @@ class ReplenishEngineIntegrationTest extends BaseIntegrationTest {
         assertThat(new BigDecimal(llm.get("confidence").toString())).isEqualByComparingTo("1");
     }
 
+    /**
+     * 盲审 P1-3:窗口内 0 销量的在售 SKU 也要进采购建议——慢销 min/max 本来就是为
+     * "卖得最慢的"设计的,28 天颗粒无收恰恰是它最该兜住的对象(修复前从建议里整个消失)。
+     * 清仓中/停售仍然排除。
+     */
+    @Test
+    void zeroSalesOnSaleSkuStillGetsSlowMoverSuggestion() {
+        Machine m = machine("8楼测试机");
+        Product anchor = product("统计锚点水", "24", null, "在售"); // 有销量,撑起 dataAsOf
+        dailySales(m.getId(), anchor.getId(), 28, "2");
+        Product zero = product("零销量卤蛋", "12", null, "在售");       // 28 天颗粒无收,仓库 0
+        Product zeroClearing = product("零销量清仓饼", "12", null, "清仓中");
+        Product zeroOff = product("零销量停售糖", "12", null, "停售");
+
+        engine.recalc("测试员");
+
+        // 零销量在售品:avg=0 → 慢销分支,可用 0 < min 0.5箱(6)→ 补到 max 1箱 = 12
+        ReplenishPlan plan = onePlan(ReplenishEngine.TYPE_PURCHASE, null, zero.getId());
+        assertThat(plan.getAvgDaily()).isEqualByComparingTo("0");
+        assertThat(plan.getSafetyStock()).isNull(); // 慢销不套公式
+        assertThat(plan.getTargetLevelS()).isEqualByComparingTo("12");
+        assertThat(plan.getSuggestQty()).isEqualByComparingTo("12");
+        assertThat(plan.getBoxRoundQty()).isEqualByComparingTo("12");
+        assertThat(plan.getFormulaJson()).contains("慢销");
+        // 清仓中/停售:照旧一行不出
+        assertThat(plans(zeroClearing.getId())).isEmpty();
+        assertThat(plans(zeroOff.getId())).isEmpty();
+    }
+
     /** 需求统计快照:数据截至日 = 最后一笔出货日;样本不足 SKU 星期系数禁用 */
     @Test
     void demandSnapshotBasics() {

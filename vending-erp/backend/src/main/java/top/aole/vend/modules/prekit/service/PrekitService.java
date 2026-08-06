@@ -41,7 +41,8 @@ import java.util.Set;
 /**
  * Pre-kit 配货单服务(M2-3,调研 §4.4-5 + 穿行审计 P2-12):
  * 补货建议(机器侧勾选行)→ 按机分组配货单 → 仓库装箱出发(已执行)→
- * 次日通道2导入转移单按 机器×SKU(±48h 窗口)自动核销 → 差量=带回 → 带回率。
+ * 次日通道2导入转移单自动核销(±48h 窗口内 1:1 占用:一张转移单只授信一张配货单,盲审 P0-1)
+ * → 差量=带回 → 带回率。
  *
  * 状态联动:建议行 建议 →(生成)已生成配货单 →(执行)已执行;
  * 配货单 已生成 →(执行)已执行 →(核销)已核销/有差异;超窗未核销亮黄灯(计算字段)。
@@ -225,21 +226,24 @@ public class PrekitService {
             return 0;
         }
         // 候选配货单:同机器,配货日在导入单业务日 ±48h 窗口内,未核销
-        Set<Long> candidateIds = new LinkedHashSet<>();
+        Map<Long, PrekitTicket> candidates = new LinkedHashMap<>();
         for (DocHead doc : docs) {
-            List<PrekitTicket> candidates = ticketMapper.selectList(new LambdaQueryWrapper<PrekitTicket>()
+            for (PrekitTicket t : ticketMapper.selectList(new LambdaQueryWrapper<PrekitTicket>()
                     .eq(PrekitTicket::getMachineId, doc.getMachineId())
                     .in(PrekitTicket::getTicketStatus, PrekitTicket.STATUS_CREATED, PrekitTicket.STATUS_EXECUTED)
                     .between(PrekitTicket::getPlanDate,
                             doc.getBizDate().minusDays(PrekitTicket.VERIFY_WINDOW_DAYS),
-                            doc.getBizDate().plusDays(PrekitTicket.VERIFY_WINDOW_DAYS)));
-            for (PrekitTicket t : candidates) {
-                candidateIds.add(t.getId());
+                            doc.getBizDate().plusDays(PrekitTicket.VERIFY_WINDOW_DAYS)))) {
+                candidates.putIfAbsent(t.getId(), t);
             }
         }
+        // P0-1:配货日早的先挑单(1:1 占用制下,老单优先占离自己最近的那张转移单)
+        List<PrekitTicket> ordered = new ArrayList<>(candidates.values());
+        ordered.sort(java.util.Comparator.comparing(PrekitTicket::getPlanDate)
+                .thenComparing(PrekitTicket::getId));
         int verified = 0;
-        for (Long ticketId : candidateIds) {
-            if (verifyOne(ticketMapper.selectById(ticketId), operator)) {
+        for (PrekitTicket ticket : ordered) {
+            if (verifyOne(ticket, operator)) {
                 verified++;
             }
         }
@@ -265,9 +269,14 @@ public class PrekitService {
     }
 
     /**
-     * 单张核销:窗口 = [配货日−2, 配货日+2],取该机器窗口内全部导入转移单按 SKU 汇总实上架量;
+     * 单张核销(盲审 P0-1 · 1:1 占用制):窗口 = [配货日−2, 配货日+2],在该机器窗口内
+     * "尚未被任何配货单占用"的导入转移单里,按 biz_date 距配货日最近取**一张**,
+     * 该单按 SKU 汇总为实上架量,verify_doc_id 落这张单 = 占用登记(uk_verify_doc 唯一索引兜底并发);
      * 逐行 带回 = max(带出 − 上架, 0);带回率 = Σ带回/Σ带出;全配 → 已核销,有差 → 有差异。
-     * 无可匹配转移单 → 返回 false 保持原状态(超窗黄灯由列表计算字段亮)。
+     * 无可占用转移单 → 返回 false 保持原状态(超窗黄灯由列表计算字段亮)。
+     *
+     * 为什么 1:1:机器侧策略是"每天到访补满",正常运营下每天一张配货单+一批导入;
+     * 若按窗口全量汇总,同一张转移单会同时授信给相邻几天的配货单,带回率被系统性算成 0。
      */
     private boolean verifyOne(PrekitTicket ticket, String operator) {
         if (ticket == null || PrekitTicket.STATUS_VERIFIED.equals(ticket.getTicketStatus())
@@ -276,8 +285,13 @@ public class PrekitService {
         }
         LocalDate from = ticket.getPlanDate().minusDays(PrekitTicket.VERIFY_WINDOW_DAYS);
         LocalDate to = ticket.getPlanDate().plusDays(PrekitTicket.VERIFY_WINDOW_DAYS);
+        Long matchedDocId = queryMapper.pickUnoccupiedImportDocId(
+                ticket.getMachineId(), from, to, ticket.getPlanDate());
+        if (matchedDocId == null) {
+            return false; // 窗口内没有未被占用的导入转移单
+        }
         Map<Long, BigDecimal> loadedBySku = new HashMap<>();
-        for (Map<String, Object> row : queryMapper.importedLoadedByMachine(ticket.getMachineId(), from, to)) {
+        for (Map<String, Object> row : queryMapper.loadedByDoc(matchedDocId)) {
             loadedBySku.put(((Number) row.get("productId")).longValue(),
                     new BigDecimal(row.get("loadedQty").toString()));
         }
@@ -303,7 +317,7 @@ public class PrekitService {
         ticket.setTicketStatus(totalTakeback.signum() > 0
                 ? PrekitTicket.STATUS_DIFF : PrekitTicket.STATUS_VERIFIED);
         ticket.setTakebackRate(rate);
-        ticket.setVerifyDocId(queryMapper.firstImportDocId(ticket.getMachineId(), from, to));
+        ticket.setVerifyDocId(matchedDocId); // 占用登记:这张转移单从此不再授信给其他配货单
         ticket.setVerifyAt(LocalDateTime.now());
         ticket.setUpdateUser(PREKIT_USER);
         ticketMapper.updateById(ticket);

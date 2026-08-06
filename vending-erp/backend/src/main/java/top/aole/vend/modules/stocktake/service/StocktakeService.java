@@ -345,6 +345,21 @@ public class StocktakeService {
             }
         }
 
+        // 并发抢占(盲审 P1-1,同 DocStatusGuard 模式):写副作用(盘盈亏/退库单/锚点)前条件 UPDATE
+        // 抢状态,受影响行数≠1 说明已被他人并发确认(双开标签页/离线队列重放/网络重试)——后来者
+        // 明确报"已被处理",财务单据绝不生成两遍。放在全部校验守卫之后:上面的守卫都是只读,
+        // 被守卫拒绝时状态保持"待确认"可重试;"处理中"是事务内瞬态,提交时覆盖为"已完成",
+        // 抢占后任何异常整个事务回滚回"待确认"。
+        int claimed = stocktakeMapper.update(null,
+                new com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper<Stocktake>()
+                        .eq(Stocktake::getId, id)
+                        .eq(Stocktake::getStStatus, Stocktake.ST_PENDING)
+                        .set(Stocktake::getStStatus, Stocktake.ST_CONFIRMING));
+        if (claimed != 1) {
+            throw new BizException(String.format(
+                    "盘点单[%s]已被处理(他人正在确认或已确认完成),请刷新查看结果,不要重复提交", st.getStNo()));
+        }
+
         LocalDateTime confirmTime = LocalDateTime.now();
         LocalDate bizDate = confirmTime.toLocalDate();
         ConfirmResp resp = new ConfirmResp();
