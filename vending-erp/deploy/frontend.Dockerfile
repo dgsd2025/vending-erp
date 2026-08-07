@@ -2,7 +2,8 @@
 FROM node:20-alpine AS build
 WORKDIR /build
 # 先设国内镜像源,再装 pnpm(国内 ECS 直连 npmjs 会超时)
-RUN npm config set registry https://registry.npmmirror.com && npm i -g pnpm@9
+# pnpm 版本对齐本地 11.x:pnpm-workspace.yaml 用的 allowBuilds 是 pnpm10+ 字段,pnpm9 会报 packages 缺失
+RUN npm config set registry https://registry.npmmirror.com && npm i -g pnpm@11
 COPY frontend/package.json frontend/pnpm-lock.yaml* frontend/pnpm-workspace.yaml* ./
 RUN pnpm install --frozen-lockfile || pnpm install
 COPY frontend/ .
