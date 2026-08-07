@@ -1,0 +1,32 @@
+# 售卖机 ERP 生产编排(ole 平台 · /data/apps/vend/)
+# 连共享 RDS(不自带 mysql 容器);密码等敏感值全从 .env 注入(600 权限,不进 Git)
+services:
+  vend-server:
+    build:
+      context: ..
+      dockerfile: deploy/backend.Dockerfile
+    container_name: vend-server
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      TZ: Asia/Shanghai
+      SERVER_PORT: 8081
+      # 下列由 .env 提供:SPRING_DATASOURCE_URL / _USERNAME / _PASSWORD / LLM_* 等
+    expose:
+      - "8081"          # 仅容器网络内暴露,不对宿主机开端口
+    networks: [vendnet]
+
+  vend-web:
+    build:
+      context: ..
+      dockerfile: deploy/frontend.Dockerfile
+    container_name: vend-web
+    restart: unless-stopped
+    depends_on: [vend-server]
+    ports:
+      - "127.0.0.1:8085:80"   # 仅本机;由中央 Caddy 反代(端口 8085 = ole 8080-8099 段内为 vend 分配)
+    networks: [vendnet]
+
+networks:
+  vendnet:
+    driver: bridge
