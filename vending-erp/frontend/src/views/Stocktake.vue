@@ -6,6 +6,7 @@ import DocDetailDrawer from '@/components/doc/DocDetailDrawer.vue'
 import CashCheckPanel from '@/components/money/CashCheckPanel.vue'
 import ClaimPanel from '@/components/money/ClaimPanel.vue'
 import { CLAIMABLE_REASONS } from '@/api/claim'
+import { pdcaApi, type ItemSaveReq, type ItemRow as PdcaItemRow } from '@/api/pdca'
 import { pageMachines, pageProducts, type Machine } from '@/api/basedata'
 import {
   ACCOUNT_ERROR_REASONS, DIFF_REASONS,
@@ -428,6 +429,52 @@ const claimPrefillAmount = computed(() =>
     .toFixed(2)))
 const claimDialogVisible = ref(false)
 
+// ============================== 第 5 步:盘亏起草改进任务(M4-3 PDCA 点亮) ==============================
+
+const draftDialogVisible = ref(false)
+const draftLoading = ref(false)
+const draftRows = ref<ItemSaveReq[]>([])
+const existingItems = ref<PdcaItemRow[]>([])
+const savingDrafts = ref(false)
+
+async function openDraft() {
+  if (!detail.value) return
+  draftLoading.value = true
+  try {
+    const resp = await pdcaApi.draftFromStocktake(detail.value.id)
+    draftRows.value = resp.drafts
+    existingItems.value = resp.existing
+    draftDialogVisible.value = true
+  } catch (e: any) {
+    ElMessage.error(e?.message || '起草失败')
+  } finally {
+    draftLoading.value = false
+  }
+}
+
+async function confirmDrafts() {
+  if (!draftRows.value.length) {
+    draftDialogVisible.value = false
+    return
+  }
+  savingDrafts.value = true
+  try {
+    for (const d of draftRows.value) {
+      await pdcaApi.create(d)
+    }
+    ElMessage.success(`已登记 ${draftRows.value.length} 条改进任务,验证日到期驾驶舱自动提醒回查`)
+    draftDialogVisible.value = false
+    // 刷新已挂任务(便于用户看到"已起草")
+    if (detail.value) {
+      existingItems.value = (await pdcaApi.draftFromStocktake(detail.value.id)).existing
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.message || '登记失败')
+  } finally {
+    savingDrafts.value = false
+  }
+}
+
 // ============================== 单据抽屉(七律#3:单号可点) ==============================
 
 const docDrawerVisible = ref(false)
@@ -788,11 +835,19 @@ onUnmounted(() => {
               <template v-else>吞货/被盗归因行才可索赔;改进任务:吞货多→报修货道 · 过期多→降机内上限<br /><span class="chip c-gray">改进任务 里程碑 4 开放</span></template>
             </div>
           </div>
-          <!-- 第5步 · 下轮验证(灰位) -->
-          <div class="wz-step wz-dim">
-            <div class="wz-no">第 5 步 · 下轮验证</div>
-            <div class="wz-title">下次盘点自动回查</div>
-            <div class="wz-body mini">该原因损耗环比↓?达标关闭·不达标升级<br /><span class="chip c-gray">里程碑 4 开放</span>·索赔挂应收:<span class="chip c-green">已开放(第 4 步)</span></div>
+          <!-- 第5步 · 改进+下轮验证(M4-3 PDCA 点亮) -->
+          <div class="wz-step" :class="detail.stStatus === '已完成' ? 'wz-active' : 'wz-dim'">
+            <div class="wz-no">第 5 步 · 改进 + 下轮验证{{ detail.stStatus === '已完成' ? ' ← 可起草' : '' }}</div>
+            <div class="wz-title">吞货/过期/被盗 → 一键起草改进任务</div>
+            <div class="wz-body mini">
+              <template v-if="detail.stStatus === '已完成'">
+                <div>按有改进空间的原因起草改进任务(吞货多→报修货道·过期多→降机内上限);验证指标=该原因损耗额,验证日=下次月盘,到期系统自动回查。</div>
+                <el-button type="primary" size="small" :loading="draftLoading" style="margin-top: 4px" @click="openDraft">
+                  🔄 一键起草改进任务(去 PDCA)
+                </el-button>
+              </template>
+              <template v-else>盘点确认过账后开放:该原因损耗环比↓?达标关闭·不达标升级<br /><span class="chip c-gray">先完成第 3 步确认</span>·索赔挂应收:<span class="chip c-green">已开放(第 4 步)</span></template>
+            </div>
           </div>
         </div>
       </div>
@@ -921,6 +976,51 @@ onUnmounted(() => {
         :auto-open-create="true"
         @created="openDetail(detail.id)"
       />
+    </el-dialog>
+
+    <!-- 五步第 5 步:盘亏起草改进任务(M4-3 PDCA;预填不落库,老板确认后才登记) -->
+    <el-dialog v-model="draftDialogVisible" title="🔄 起草改进任务(盘亏 → 下轮验证)" width="720px" append-to-body>
+      <p class="mini" style="margin-bottom: 10px">
+        按"有改进空间"的原因(吞货/过期/被盗)各起草一条改进任务;账错类(录入/盘点错误)不起草。
+        验证指标=该原因当月损耗额,目标=本次损耗减半(≥¥10),验证日=下次月盘,到期系统自动回查。
+      </p>
+      <div v-if="existingItems.length" class="mini" style="margin-bottom: 8px; color: var(--amber)">
+        ⚠️ 该盘点单已挂 {{ existingItems.length }} 条改进任务(防重复起草):
+        <span v-for="e in existingItems" :key="e.id" class="chip c-amber" style="margin-left: 4px">
+          #{{ e.id }} {{ e.metricParam }} {{ e.itemStatus }}
+        </span>
+      </div>
+      <el-table v-if="draftRows.length" :data="draftRows" size="small">
+        <el-table-column label="来源" width="64">
+          <template #default><span class="chip c-blue">盘点</span></template>
+        </el-table-column>
+        <el-table-column label="问题 → 措施" min-width="280">
+          <template #default="{ row }">
+            <div class="mini">{{ row.problemDesc }}</div>
+            <div class="mini">→ {{ row.measure }}</div>
+          </template>
+        </el-table-column>
+        <el-table-column label="验证指标" min-width="150">
+          <template #default="{ row }"><span class="mini">{{ row.verifyMetric }}</span></template>
+        </el-table-column>
+        <el-table-column label="验证日" width="100">
+          <template #default="{ row }"><span class="num">{{ row.verifyDate }}</span></template>
+        </el-table-column>
+      </el-table>
+      <div v-else class="mini" style="padding: 12px 0; text-align: center; color: var(--ink2)">
+        本次盘点无"有改进空间"的盘亏原因(吞货/过期/被盗),无需起草改进任务 ✓
+      </div>
+      <template #footer>
+        <el-button @click="draftDialogVisible = false">关闭</el-button>
+        <el-button
+          v-if="draftRows.length"
+          type="primary"
+          :loading="savingDrafts"
+          @click="confirmDrafts"
+        >
+          确认登记 {{ draftRows.length }} 条改进任务
+        </el-button>
+      </template>
     </el-dialog>
   </div>
 </template>

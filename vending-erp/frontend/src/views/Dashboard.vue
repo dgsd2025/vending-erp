@@ -9,7 +9,9 @@ import { clearanceAlerts, machineSuggestions, purchaseSuggestions } from '@/api/
 import { listTickets } from '@/api/prekit'
 import { pageFlows } from '@/api/money'
 import { settlementOverview } from '@/api/settlement'
+import AnomalyRadar from '@/components/ai/AnomalyRadar.vue'
 import { supplierOverview } from '@/api/settle'
+import { pdcaApi, type ItemRow } from '@/api/pdca'
 import { useAppStore } from '@/stores/app'
 
 /**
@@ -127,6 +129,16 @@ onMounted(async () => {
 const taskChip = (s: string, dt?: string | null) =>
   s === '已完成' ? (dt === '系统校验' ? '✅' : '🟡') : s === '逾期' ? '🔴' : '⬜'
 
+// 本周到期待验证改进任务(M4-3 PDCA 点亮),失败不拖累驾驶舱主加载
+const pdcaDue = ref<ItemRow[]>([])
+onMounted(async () => {
+  try {
+    pdcaDue.value = await pdcaApi.dueWeek()
+  } catch {
+    pdcaDue.value = []
+  }
+})
+
 const today = new Date()
 const weekday = ['日', '一', '二', '三', '四', '五', '六'][today.getDay()]
 const todayStr = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`
@@ -207,6 +219,26 @@ function gotoDiffPending() {
       <span v-else class="mini" style="color: #9db8a8; margin-left: auto">
         任务绑角色、角色绑人;完成有系统校验,不是打勾就算 · 任务日历 →
       </span>
+    </div>
+
+    <!-- 本周到期待验证改进任务(M4-3 PDCA 点亮:到期→去改进循环页一键回查) -->
+    <div
+      v-if="pdcaDue.length"
+      class="ledger-card"
+      style="cursor: pointer; border-left: 3px solid var(--amber)"
+      @click="router.push('/pdca')"
+    >
+      <h3 style="margin: 0">
+        🔄 本周到期待验证改进任务
+        <span class="hint">改进有没有见效,到期系统自动回查</span>
+        <span class="chip c-amber" style="margin-left: 8px">{{ pdcaDue.length }} 条</span>
+      </h3>
+      <div style="display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px">
+        <span v-for="d in pdcaDue.slice(0, 5)" :key="d.id" class="chip" :class="d.due ? 'c-red' : 'c-amber'">
+          {{ d.due ? '⏰' : '📅' }} {{ d.sourceScene }} · {{ d.verifyMetric }} · {{ d.verifyDate }}
+        </span>
+        <span class="mini" style="margin-left: auto; color: var(--ink2)">去改进循环页回查 →</span>
+      </div>
     </div>
 
     <!-- 红灯待办(M1 真值,点击跳对应页) -->
@@ -368,6 +400,9 @@ function gotoDiffPending() {
         </p>
       </div>
     </div>
+
+    <!-- 异常雷达(接入点#4):规则侦测 + AI 归因,🔬 过程可查 -->
+    <AnomalyRadar style="margin-top: 16px" />
 
     <p class="ledger-foot-note">
       — 驾驶舱只读汇总,每个数字都能点进出处;红灯清零是每天的第一目标 —
