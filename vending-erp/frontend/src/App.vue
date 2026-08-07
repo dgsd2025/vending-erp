@@ -48,6 +48,7 @@ const groups: { label?: string; items: { path?: string; ico: string; title: stri
       { path: '/bi', ico: '📊', title: 'BI 经营分析' },
       { path: '/reports', ico: '📈', title: '报表' },
       { path: '/products', ico: '🧃', title: '商品 · 单品分析' },
+      { path: '/monthly-report', ico: '🗓️', title: '月度报表' },
       { path: '/pdca', ico: '🔄', title: '改进循环 PDCA' },
     ],
   },
