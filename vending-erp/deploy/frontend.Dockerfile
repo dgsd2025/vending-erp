@@ -1,8 +1,9 @@
 # 售卖机 ERP 前端生产镜像(ole 规范:node 构建 + nginx 静态托管)
-FROM node:20-alpine AS build
+# Node 22:对齐本地环境(pnpm@11 需 Node≥22.13,用到 node:sqlite;Node20 会 ERR_UNKNOWN_BUILTIN_MODULE)
+FROM node:22-alpine AS build
 WORKDIR /build
 # 先设国内镜像源,再装 pnpm(国内 ECS 直连 npmjs 会超时)
-# pnpm 版本对齐本地 11.x:pnpm-workspace.yaml 用的 allowBuilds 是 pnpm10+ 字段,pnpm9 会报 packages 缺失
+# pnpm 版本对齐本地 11.x:pnpm-workspace.yaml 用的 allowBuilds 是 pnpm10+ 字段
 RUN npm config set registry https://registry.npmmirror.com && npm i -g pnpm@11
 COPY frontend/package.json frontend/pnpm-lock.yaml* frontend/pnpm-workspace.yaml* ./
 RUN pnpm install --frozen-lockfile || pnpm install
