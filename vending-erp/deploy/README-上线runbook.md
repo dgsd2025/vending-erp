@@ -3,6 +3,9 @@
 > 目标:把售卖机 ERP 作为 ole 平台新产品 `vend` 上线到阿里云 ECS。
 > 部署包已备好(本目录);标 🙋 的步骤**必须你本人做**(我不代输密码/不代付款/不代备案),标 🤖 的是授权后我能替你做的。
 
+> **✅ 决策已定(2026-08-07)**:①数据库=**自带 mysql:8.0 容器**(不走共享 RDS,数据物理隔离);②**先合 main 再从 main 部署**;③结算模式上线 **UNSET**(设置中心再切)。
+> **⚠ 两处 runbook 早期笔误已修**:后端实际读 `DB_URL/DB_USERNAME/DB_PASSWORD`(非 `SPRING_DATASOURCE_*`);Caddy 反代目标是容器网络内的 `vend-web:80`(非宿主 `127.0.0.1:8085`)。以 docker-compose.prod.yml / .env.prod.example / caddy-site.conf 现内容为准。
+
 ## 关键参数(ole 规范)
 
 | 项 | 值 |
