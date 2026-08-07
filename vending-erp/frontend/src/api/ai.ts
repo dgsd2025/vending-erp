@@ -27,6 +27,12 @@ export interface LlmTransparency {
   reasoning: string | null
   outputText: string | null
   confidence: number | null
+  /**
+   * 置信分来源(后端并行票在加):
+   *   'computed' = 按本次数据完备度 / 相似度真算;'fixed' = 基准置信(固定档,按结论类型给定)。
+   * 取不到(旧后端 / 字段未返)时前端按占位说明展示,不报错。
+   */
+  confidenceSource?: string | null
   inputDigest: string | null
   cost: {
     tokensIn: number | null

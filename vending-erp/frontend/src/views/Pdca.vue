@@ -11,6 +11,7 @@ import {
   type MetricDef,
   type MetricValue,
   type ItemSaveReq,
+  type BoardScene,
 } from '@/api/pdca'
 
 /**
@@ -193,6 +194,64 @@ function openEdit(row: ItemRow) {
   dialogVisible.value = true
   previewMetric()
 }
+/**
+ * 律5 P1-3 落地:红/黄灯环节「一键起草改进任务(A)」。
+ * 看板指标 label → 验证指标 key 映射(指标现值即回查靶子);多指标环节取最差(红优先)那盏当靶。
+ * 与后端 PdcaMetricService 的 K_* 常量一一对应,新增指标时同步这里。
+ */
+const LABEL_TO_METRIC: Record<string, string> = {
+  售罄货道占比: 'replenish.stockout_rate',
+  平均带回率: 'replenish.takeback_rate',
+  实收差异单占比: 'purchase.receipt_diff_rate',
+  最大进价环比: 'purchase.price_mom',
+  当月动销率: 'select.sell_through_rate',
+  本月调价次数: 'price.change_effect',
+  钱账红灯数: 'money.overdue_payable_count',
+  当月损耗额: 'stocktake.loss_amount',
+  账实符合率: 'stocktake.match_rate',
+}
+
+/** 默认验证日期 = 一个月后(下次月盘),YYYY-MM-DD */
+function defaultVerifyDate(): string {
+  const d = new Date()
+  d.setMonth(d.getMonth() + 1)
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+}
+
+/**
+ * 从红/黄灯环节一键起草改进任务:预填 来源环节 + 该环节红灯指标(问题描述)+
+ * 验证指标(靶子,取该指标现值)+ 推荐方向(改进措施初稿);用户核对后保存即入清单。
+ */
+function draftFromScene(s: BoardScene) {
+  editingId.value = null
+  // 取最差的一盏指标(红 > 黄 > 首个)作为本次改进的验证靶
+  const worst =
+    s.indicators.find((i) => i.level === 'red') ||
+    s.indicators.find((i) => i.level === 'amber') ||
+    s.indicators[0]
+  const metricKey = worst ? (LABEL_TO_METRIC[worst.label] ?? '') : ''
+  const def = metrics.value.find((m) => m.key === metricKey)
+  Object.assign(form, {
+    sourceScene: s.scene,
+    problemDesc: worst
+      ? `${s.scene}环节亮${LIGHT_TEXT[s.light]}灯:${worst.label} 当前 ${worst.display},需改进`
+      : `${s.scene}环节亮${LIGHT_TEXT[s.light]}灯,需改进`,
+    measure: s.hint || '',
+    verifyMetric: def ? `${def.name}(${def.unit})` : '',
+    metricKey,
+    metricParam: '',
+    targetValue: undefined,
+    compareOp: def?.defaultOp || '<=',
+    verifyDate: defaultVerifyDate(),
+    sourceRefType: 'pdca-board',
+    sourceRefId: null,
+    aiDraft: false,
+  })
+  metricPreview.value = null
+  dialogVisible.value = true
+  if (metricKey) previewMetric()
+}
+
 function onMetricChange() {
   const def = selectedMetric.value
   if (def) form.compareOp = def.defaultOp || '<='
@@ -291,6 +350,17 @@ const dueCount = computed(() => board.value?.dueCount ?? 0)
               style="color: var(--amber)"
               >💡 {{ s.hint }}</span
             >
+            <!-- 律5 P1-3:红/黄灯必产生改进任务(A)——每盏都能一键起草,不再只有盘点环节 -->
+            <el-button
+              v-if="s.light === 'red' || s.light === 'amber'"
+              type="primary"
+              size="small"
+              plain
+              class="draft-btn"
+              @click="draftFromScene(s)"
+            >
+              ＋ 起草改进任务(A)
+            </el-button>
           </div>
         </div>
       </div>
@@ -506,10 +576,14 @@ const dueCount = computed(() => board.value?.dueCount ?? 0)
 .scene-foot {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   margin-top: 8px;
   padding-top: 6px;
   border-top: 1px solid var(--line2);
+}
+.draft-btn {
+  align-self: flex-start;
+  margin-top: 2px;
 }
 .flow-bar {
   display: flex;

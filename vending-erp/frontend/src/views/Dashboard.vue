@@ -15,6 +15,7 @@ import { pdcaApi, type ItemRow } from '@/api/pdca'
 import { finreportApi, type AssetSnapshotResp } from '@/api/finreport'
 import { aiApi } from '@/api/ai'
 import LlmTransparencyBadge from '@/components/ai/LlmTransparencyBadge.vue'
+import MockBadge from '@/components/ai/MockBadge.vue'
 import { useAppStore } from '@/stores/app'
 
 /**
@@ -197,13 +198,18 @@ const netAssetMom = computed(() => {
 })
 
 // M4-6 AI 经营洞察(接入点#3 解释层:家底环比 mock 解读),失败不拖累主加载
-const insight = ref<{ title: string; text: string; llmCallId: number } | null>(null)
+const insight = ref<{ title: string; text: string; llmCallId: number; model: string } | null>(null)
 const insightLoading = ref(false)
 onMounted(async () => {
   insightLoading.value = true
   try {
     const r = await aiApi.insight('asset-mom')
-    insight.value = { title: String(r.title), text: String(r.text), llmCallId: Number(r.llmCallId) }
+    insight.value = {
+      title: String(r.title),
+      text: String(r.text),
+      llmCallId: Number(r.llmCallId),
+      model: r.model != null ? String(r.model) : '',
+    }
   } catch {
     insight.value = null
   } finally {
@@ -448,6 +454,7 @@ onMounted(async () => {
       <h3 style="margin: 0 0 6px">
         🧠 AI 经营洞察
         <span class="hint">{{ insight?.title ?? '家底环比解读' }} · 规则算数字 · AI 讲人话</span>
+        <MockBadge v-if="insight" :model="insight.model" :text="insight.text" />
       </h3>
       <div v-loading="insightLoading">
         <p v-if="insight" class="insight-text">

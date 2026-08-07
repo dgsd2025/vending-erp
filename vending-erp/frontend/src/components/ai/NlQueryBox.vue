@@ -3,6 +3,7 @@ import { onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { aiApi, type NlQueryResult } from '@/api/ai'
 import LlmTransparencyBadge from './LlmTransparencyBadge.vue'
+import MockBadge from './MockBadge.vue'
 
 /**
  * BI「问数」框(接入点#6,实验性):自然语言 → SQL(只读白名单视图 + LIMIT)→ 表格。
@@ -59,6 +60,7 @@ onMounted(async () => {
       <p class="mini">
         <b>{{ result.matchedTemplate }}</b>
         <span class="chip c-gray" style="margin-left: 6px">{{ result.mode }}</span>
+        <MockBadge :mode="result.mode" />
         <LlmTransparencyBadge :call-id="result.llmCallId" size="mini" />
       </p>
       <el-table :data="result.rows" size="small" max-height="320">

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { useRoute } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import LlmTransparencyBadge from '@/components/ai/LlmTransparencyBadge.vue'
+import MockBadge from '@/components/ai/MockBadge.vue'
 import { aiApi, type AiModelRow } from '@/api/ai'
 import {
   monthlyApi,
@@ -17,6 +18,7 @@ import {
  * 全部只读聚合已有服务;AI 段(第七件综述)挂 🔬 过程 + [MOCK] 徽标 + 可换模型。
  */
 const route = useRoute()
+const router = useRouter()
 const month = ref<string>(typeof route.query.month === 'string' ? route.query.month : '')
 const months = ref<string[]>([])
 const dataAsOf = ref<string | null>(null)
@@ -156,7 +158,12 @@ onMounted(async () => {
         <el-tab-pane label="① 进销存汇总" name="inventory">
           <el-table :data="pkg.inventory.rows" size="small" border max-height="440">
             <el-table-column label="SKU" prop="code" width="110" />
-            <el-table-column label="商品" prop="name" min-width="140" />
+            <el-table-column label="商品" min-width="140">
+              <template #default="{ row }">
+                <a v-if="row.productId" class="plink" @click="router.push(`/products/${row.productId}`)">{{ row.name }} ↗</a>
+                <span v-else>{{ row.name }}</span>
+              </template>
+            </el-table-column>
             <el-table-column label="期初" align="right" width="80"><template #default="{ row }">{{ row.openingQty }}</template></el-table-column>
             <el-table-column label="入库" align="right" width="80"><template #default="{ row }">{{ row.inQty }}</template></el-table-column>
             <el-table-column label="出库" align="right" width="80"><template #default="{ row }">{{ row.outQty }}</template></el-table-column>
@@ -279,7 +286,7 @@ onMounted(async () => {
               <div class="flex items-center gap-8px mb-6px flex-wrap">
                 <b>🤖 AI 起草综述</b>
                 <LlmTransparencyBadge :call-id="report.llmCallId" size="small" />
-                <el-tag v-if="report.mock" type="warning" size="small" effect="plain">[MOCK]</el-tag>
+                <MockBadge :mock="report.mock" :model="report.model" />
                 <el-tag v-if="report.cacheHit" type="info" size="small" effect="plain">缓存命中</el-tag>
                 <div class="flex items-center gap-6px" style="margin-left: auto">
                   <span class="text-12px text-gray-400">起草模型</span>
@@ -318,6 +325,8 @@ export default { name: 'MonthlyReport' }
 
 <style scoped>
 .neg { color: #c0392b; }
+.plink { color: #2f6f4f; cursor: pointer; font-weight: 600; }
+.plink:hover { text-decoration: underline; }
 .tab-total { margin-top: 10px; padding: 8px 12px; background: #f7f4ea; border-radius: 6px; font-size: 13px; }
 .tab-total b { color: #2f6f4f; font-size: 15px; }
 .sub-h { font-weight: 600; margin: 6px 0; color: #555; }

@@ -1,7 +1,11 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import { aiApi, type Anomaly } from '@/api/ai'
 import LlmTransparencyBadge from './LlmTransparencyBadge.vue'
+import MockBadge from './MockBadge.vue'
+
+const router = useRouter()
 
 /**
  * 驾驶舱「异常雷达」卡(接入点#4):规则引擎侦测异常清单(销量骤变/盘差/结算差异),
@@ -25,6 +29,20 @@ const redCount = computed(() => rows.value.filter((r) => r.severity === '红').l
 const loading = ref(false)
 const explains = ref<Record<string, { text: string; llmCallId: number } | undefined>>({})
 const explaining = ref<Record<string, boolean>>({})
+
+/**
+ * 律3 下钻:销量骤变异常 key = "sales-swing:{machineId}:{productId}",
+ * 从中抠出机器/单品 id(为 null / 'null' / 空则视为无,不给链接)。
+ */
+function entityIds(row: Anomaly): { machineId: number | null; productId: number | null } {
+  if (row.type !== 'sales-swing') return { machineId: null, productId: null }
+  const parts = String(row.key).split(':')
+  const parse = (v: string | undefined) => {
+    const n = Number(v)
+    return v && v !== 'null' && Number.isFinite(n) && n > 0 ? n : null
+  }
+  return { machineId: parse(parts[1]), productId: parse(parts[2]) }
+}
 
 async function load() {
   loading.value = true
@@ -65,6 +83,21 @@ onMounted(load)
           <span class="chip" :class="row.severity === '红' ? 'c-red' : 'c-amber'">{{ row.severity }}</span>
           <span>{{ row.title }}</span>
         </div>
+        <!-- 律3 下钻:销量骤变异常挂机器/单品详情链接 -->
+        <div v-if="entityIds(row).machineId || entityIds(row).productId" class="anomaly-links">
+          <a
+            v-if="entityIds(row).machineId"
+            class="entity-link"
+            @click="router.push(`/machines/${entityIds(row).machineId}`)"
+            >🏪 机器详情 →</a
+          >
+          <a
+            v-if="entityIds(row).productId"
+            class="entity-link"
+            @click="router.push(`/products/${entityIds(row).productId}`)"
+            >🧃 单品详情 →</a
+          >
+        </div>
         <div class="anomaly-actions">
           <el-button
             v-if="!explains[row.key]"
@@ -77,6 +110,7 @@ onMounted(load)
           </el-button>
           <template v-else>
             <span class="anomaly-explain">{{ explains[row.key]!.text }}</span>
+            <MockBadge :text="explains[row.key]!.text" />
             <LlmTransparencyBadge :call-id="explains[row.key]!.llmCallId" size="mini" />
           </template>
         </div>
@@ -108,9 +142,28 @@ onMounted(load)
   font-size: 13px;
   line-height: 1.5;
 }
+.anomaly-links {
+  margin-top: 3px;
+  padding-left: 4px;
+  display: flex;
+  gap: 12px;
+}
+.entity-link {
+  font-size: 12px;
+  color: var(--green, #2f6f4f);
+  cursor: pointer;
+  font-weight: 600;
+}
+.entity-link:hover {
+  text-decoration: underline;
+}
 .anomaly-actions {
   margin-top: 4px;
   padding-left: 4px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
 }
 .anomaly-explain {
   font-size: 12.5px;

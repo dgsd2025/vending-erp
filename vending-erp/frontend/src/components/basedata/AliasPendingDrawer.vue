@@ -9,6 +9,7 @@ import {
 } from '@/api/basedata'
 import ProductSelect from './ProductSelect.vue'
 import LlmTransparencyBadge from '@/components/ai/LlmTransparencyBadge.vue'
+import MockBadge from '@/components/ai/MockBadge.vue'
 import { aiApi } from '@/api/ai'
 
 /**
@@ -31,6 +32,8 @@ const rows = ref<AliasPending[]>([])
 const loading = ref(false)
 const suggesting = ref(false)
 const chosen = ref<Record<number, number | null>>({})
+/** 最近一次生成建议的链路(「规则建议(mock断路)」/「embedding+LLM复核」)——供 MockBadge 判 mock */
+const suggestMode = ref<string | null>(null)
 
 async function load() {
   loading.value = true
@@ -50,6 +53,7 @@ async function genSuggest() {
   suggesting.value = true
   try {
     const s = await aiApi.aliasSuggest()
+    suggestMode.value = s.mode != null ? String(s.mode) : null
     ElMessage.success(`已生成建议:命中 ${s.suggested ?? 0} 条 · 无匹配 ${s.noMatch ?? 0} 条(${s.mode ?? ''})`)
     await load()
   } finally {
@@ -96,9 +100,12 @@ async function ignore(row: AliasPending) {
     <p class="mini" style="margin-top: 0">
       导入出货明细遇到不认识的「后台编号+条码」会进这里;<b>系统给建议,你只点确认</b>。绑定后由导入模块回补历史销售归属。
     </p>
-    <el-button size="small" type="primary" plain :loading="suggesting" @click="genSuggest" style="margin-bottom: 8px">
-      🤖 生成归集建议
-    </el-button>
+    <div class="flex items-center gap-8px" style="margin-bottom: 8px">
+      <el-button size="small" type="primary" plain :loading="suggesting" @click="genSuggest">
+        🤖 生成归集建议
+      </el-button>
+      <MockBadge :mode="suggestMode" />
+    </div>
     <el-table :data="rows" v-loading="loading" size="small">
       <el-table-column label="后台商品" min-width="170">
         <template #default="{ row }">
