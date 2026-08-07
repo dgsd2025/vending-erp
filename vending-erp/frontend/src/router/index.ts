@@ -21,6 +21,8 @@ const router = createRouter({
     { path: '/assets', name: 'assets', meta: { title: '资产家底' }, component: () => import('@/views/Assets.vue') },
     { path: '/staff/:name', name: 'staff-detail', meta: { title: '员工详情' }, component: () => import('@/views/StaffDetail.vue') },
     { path: '/money', name: 'money', meta: { title: '资金与对账' }, component: () => import('@/views/Money.vue') },
+    { path: '/pdca', name: 'pdca', meta: { title: '改进循环' }, component: () => import('@/views/Pdca.vue') },
+    { path: '/bi', name: 'bi', meta: { title: 'BI 经营分析' }, component: () => import('@/views/Bi.vue') },
   ],
 })
 
