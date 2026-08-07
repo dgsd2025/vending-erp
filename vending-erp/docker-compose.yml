@@ -1,0 +1,25 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: vend-mysql
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3308:3306"
+    environment:
+      MYSQL_ROOT_PASSWORD: vend123
+      MYSQL_DATABASE: vend_dev
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - vend-mysql-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "-pvend123"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+volumes:
+  vend-mysql-data:

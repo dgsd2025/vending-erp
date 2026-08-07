@@ -1,0 +1,11 @@
+# M4-1 BI 经营分析集成测试专用:独立 vend_test_bi 库(vend-mysql 容器 3308),
+# Flyway 自动迁移;与 vend_dev / 其他票的测试库完全隔离。
+spring:
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3308/vend_test_bi?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: root
+    password: vend123
+
+vend:
+  import:
+    storage-dir: target/test-bi-storage

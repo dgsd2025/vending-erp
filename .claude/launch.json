@@ -1,0 +1,32 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "vend-frontend-5187",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/yh-1/系统开发/智慧园区/vending-erp/frontend && VITE_PROXY_TARGET=http://127.0.0.1:8096 pnpm dev --port 5187"
+      ],
+      "port": 5187
+    },
+    {
+      "name": "vend-frontend-5190",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/yh-1/系统开发/智慧园区/vending-erp/frontend && VITE_PROXY_TARGET=http://127.0.0.1:8099 pnpm dev --port 5190"
+      ],
+      "port": 5190
+    },
+    {
+      "name": "vend-frontend-5193",
+      "runtimeExecutable": "sh",
+      "runtimeArgs": [
+        "-c",
+        "cd /Users/yh-1/系统开发/智慧园区/vending-erp/frontend && VITE_PROXY_TARGET=http://127.0.0.1:8102 pnpm dev --port 5193"
+      ],
+      "port": 5193
+    }
+  ]
+}

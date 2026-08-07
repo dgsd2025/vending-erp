@@ -1,0 +1,12 @@
+# M1-3 导入中心集成测试专用:独立 vend_test_imports 库(vend-mysql 容器 3308),
+# Flyway 自动迁移;与 vend_dev / vend_test 完全隔离(M1-2 真测数据别动)。
+spring:
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3308/vend_test_imports?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: root
+    password: vend123
+
+# 归档到 target 下,test 清理时一起清
+vend:
+  import:
+    storage-dir: target/test-import-storage

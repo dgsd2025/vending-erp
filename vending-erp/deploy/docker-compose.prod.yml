@@ -1,0 +1,71 @@
+# 售卖机 ERP 生产编排(ole 平台 · /data/apps/vend/)· 自带 MySQL 版
+# 自成一套(mysql + 后端 + 前端),数据物理隔离;不依赖共享 RDS。
+# 敏感值全从 .env 注入(chmod 600,不进 Git)。
+# 前端经外部网络 vend-edge 由中央 central-caddy 反代(reverse_proxy vend-web:80)。
+services:
+  vend-mysql:
+    image: mysql:8.0
+    container_name: vend-mysql
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD:?must set in .env}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-vend_prod}
+      TZ: Asia/Shanghai
+    command:
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+08:00
+    volumes:
+      - vend_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-uroot", "-p${DB_PASSWORD}"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    networks: [vendnet]
+
+  vend-server:
+    build:
+      context: ..
+      dockerfile: deploy/backend.Dockerfile
+    container_name: vend-server
+    restart: unless-stopped
+    depends_on:
+      vend-mysql:
+        condition: service_healthy
+    env_file: .env
+    environment:
+      TZ: Asia/Shanghai
+      # 连同编排内的 mysql 容器(内部 3306)
+      DB_URL: jdbc:mysql://vend-mysql:3306/${MYSQL_DATABASE:-vend_prod}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
+      DB_USERNAME: root
+      DB_PASSWORD: ${DB_PASSWORD:?must set in .env}
+      # 附件/导入落盘目录(挂到宿主卷持久化)
+      VEND_ATTACH_STORAGE_DIR: /app/storage/attachments
+      VEND_IMPORT_STORAGE_DIR: /app/storage/imports
+      # LLM 留空=全 mock,不外呼;SSO 暂关。均由 .env 覆盖(若填了真值)
+      SSO_ENABLED: ${SSO_ENABLED:-false}
+    volumes:
+      - ./storage:/app/storage
+    expose:
+      - "8081"          # 仅容器网络内暴露
+    networks: [vendnet]
+
+  vend-web:
+    build:
+      context: ..
+      dockerfile: deploy/frontend.Dockerfile
+    container_name: vend-web
+    restart: unless-stopped
+    depends_on: [vend-server]
+    networks: [vendnet, vend-edge]   # vend-edge = 与 central-caddy 共享,供反代
+
+networks:
+  vendnet:
+    driver: bridge
+  vend-edge:
+    external: true    # 先 docker network create vend-edge,再 docker network connect vend-edge central-caddy
+
+volumes:
+  vend_mysql_data:

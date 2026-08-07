@@ -1,0 +1,157 @@
+/*
+ * 「新式账本」风格基础样式(对照 UI-mockup/index.html V15)。
+ * 只放页面通用的:配色变量 / 卡片 / 标题字 / chip / 数字字体。
+ */
+:root {
+  --paper: #f6f3ec;
+  --card: #fffdf8;
+  --ink: #22312a;
+  --ink2: #5a6b60;
+  --green: #2f6e52;
+  --green-deep: #1c3d2f;
+  --green-soft: #e4efe7;
+  --amber: #c97e2c;
+  --amber-soft: #f8ecd9;
+  --red: #c0392b;
+  --red-soft: #f7e3df;
+  --blue: #31648c;
+  --blue-soft: #e2ecf3;
+  --line: #e5ded0;
+  --line2: #d5cdbc;
+  --num: 'Barlow Semi Condensed', 'PingFang SC', sans-serif;
+  --serif: 'Noto Serif SC', 'Songti SC', serif;
+
+  /* Element Plus 主色统一到账本绿(M2-9:mockup b-pri = --green,不用默认蓝) */
+  --el-color-primary: #2f6e52;
+  --el-color-primary-light-3: #6d9986;
+  --el-color-primary-light-5: #97b6a8;
+  --el-color-primary-light-7: #c1d3cb;
+  --el-color-primary-light-8: #d5e2dc;
+  --el-color-primary-light-9: #eaf0ee;
+  --el-color-primary-dark-2: #265842;
+}
+
+.ledger-page {
+  color: var(--ink);
+}
+
+.ledger-crumb {
+  font-size: 12px;
+  color: var(--ink2);
+  margin-bottom: 6px;
+  letter-spacing: 0.5px;
+}
+
+.ledger-title {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin-bottom: 4px;
+}
+
+.ledger-title h2 {
+  font-family: var(--serif);
+  font-size: 26px;
+  font-weight: 900;
+  letter-spacing: 1px;
+  margin: 0;
+}
+
+.ledger-title .sub {
+  font-size: 13px;
+  color: var(--ink2);
+}
+
+.ledger-note {
+  font-size: 12.5px;
+  color: var(--ink2);
+  margin: 0 0 18px;
+  padding-left: 2px;
+}
+
+.ledger-note b {
+  color: var(--green);
+}
+
+.ledger-card {
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  box-shadow: 0 1px 3px rgba(60, 50, 30, 0.05);
+  padding: 18px 20px;
+  margin-bottom: 16px;
+}
+
+.ledger-card h3 {
+  font-family: var(--serif);
+  font-size: 16px;
+  font-weight: 700;
+  margin: 0 0 10px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ledger-card h3 .hint {
+  font-family: -apple-system, 'PingFang SC', sans-serif;
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--ink2);
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11px;
+  padding: 2px 8px;
+  border-radius: 20px;
+  line-height: 1.6;
+  white-space: nowrap;
+}
+
+.c-green { background: var(--green-soft); color: var(--green); }
+.c-amber { background: var(--amber-soft); color: var(--amber); }
+.c-red { background: var(--red-soft); color: var(--red); }
+.c-blue { background: var(--blue-soft); color: var(--blue); }
+.c-gray { background: #eee9dd; color: #7c745f; }
+
+.num {
+  font-family: var(--num);
+}
+
+.mini {
+  font-size: 11.5px;
+  color: var(--ink2);
+}
+
+.ledger-foot-note {
+  margin-top: 22px;
+  font-size: 11.5px;
+  color: #a39a83;
+  text-align: center;
+  letter-spacing: 1px;
+}
+
+/* 名词下钻链接(七律#3:任何名词都能点进去) */
+.name-link {
+  color: var(--green);
+  cursor: pointer;
+}
+.name-link:hover {
+  text-decoration: underline;
+}
+
+/* 筛选 chip 行(p3 顶部风格):可点选 */
+.filter-chip {
+  cursor: pointer;
+  font-size: 12.5px;
+  padding: 5px 14px;
+  border: 1px solid transparent;
+  user-select: none;
+}
+
+.filter-chip.active {
+  border-color: currentColor;
+  font-weight: 700;
+}

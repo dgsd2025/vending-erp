@@ -1,0 +1,15 @@
+# M1-8 穿行审计 14 场景回归套件专用:独立 vend_test_regression 库(vend-mysql 容器 3308),
+# Flyway 自动迁移;与 vend_dev / vend_test / vend_test_imports / vend_test_purchase /
+# vend_test_report / vend_test_period 完全隔离。
+spring:
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3308/vend_test_regression?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: root
+    password: vend123
+
+# 导入/凭证归档到 target 下,clean 时一起清
+vend:
+  import:
+    storage-dir: target/test-regression-storage
+  attach:
+    storage-dir: target/test-regression-attachments

@@ -1,0 +1,7 @@
+# M2-4 盘点模块集成测试专用:独立 vend_test_stocktake 库(vend-mysql 容器 3308),
+# Flyway 自动迁移,与 vend_dev / vend_test / 其他并行票测试库完全隔离。
+spring:
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3308/vend_test_stocktake?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: root
+    password: vend123
