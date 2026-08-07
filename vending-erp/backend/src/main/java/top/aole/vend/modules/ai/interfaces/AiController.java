@@ -7,6 +7,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.web.bind.annotation.*;
 import top.aole.vend.common.result.R;
 import top.aole.vend.modules.ai.domain.AiScenes;
+import top.aole.vend.modules.ai.domain.IPdcaDraftService;
 import top.aole.vend.modules.ai.service.AiModelRouteService;
 import top.aole.vend.modules.ai.service.AliasSuggestService;
 import top.aole.vend.modules.ai.service.AnomalyService;
@@ -37,6 +38,7 @@ public class AiController {
     private final InsightService insightService;
     private final AnomalyService anomalyService;
     private final NlQueryService nlQueryService;
+    private final IPdcaDraftService pdcaDraftService;
     private final LlmTransparencyService transparencyService;
 
     // ============================== 设置中心:AI 模型配置 ==============================
@@ -109,11 +111,17 @@ public class AiController {
         return R.ok(anomalyService.detect());
     }
 
-    @ApiOperation("#4 给一条异常挂 LLM 归因叙事(mock)")
+    @Data
+    public static class ExplainReq {
+        /** 只收异常定位 key,服务端重新 detect() 用自算 metrics 起草(P1-2:不吃客户端数字/幂等键) */
+        private String key;
+    }
+
+    @ApiOperation("#4 给一条异常挂 LLM 归因叙事(只收 key,服务端重侦测定位,不信客户端数字)")
     @PostMapping("/anomalies/explain")
-    public R<Map<String, Object>> anomalyExplain(@RequestBody AnomalyService.Anomaly anomaly,
+    public R<Map<String, Object>> anomalyExplain(@RequestBody ExplainReq req,
                                                  @RequestParam(defaultValue = "false") boolean force) {
-        return R.ok(anomalyService.explain(anomaly, force));
+        return R.ok(anomalyService.explainByKey(req == null ? null : req.getKey(), force));
     }
 
     // ============================== #6 NL 查数 ==============================
@@ -129,6 +137,15 @@ public class AiController {
     @GetMapping("/nl-query/suggestions")
     public R<List<String>> nlSuggestions() {
         return R.ok(nlQueryService.suggestions());
+    }
+
+    // ============================== #7 PDCA 起草 ==============================
+
+    @ApiOperation("#7 起草改进措施+验证指标(C 指标红灯 → 措施草案;走网关落四件套+24h idempotent)")
+    @PostMapping("/pdca/draft")
+    public R<IPdcaDraftService.PdcaDraftResult> pdcaDraft(
+            @RequestBody IPdcaDraftService.PdcaDraftReq req) {
+        return R.ok(pdcaDraftService.draft(req));
     }
 
     // ============================== 透明四件套 ==============================

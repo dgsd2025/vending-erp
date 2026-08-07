@@ -99,6 +99,8 @@ public class MonthlyAnalysisService {
                         + "LLM 仅起草综述文字,未参与任何计算。")
                 .inputDigest(inputDigest)
                 .confidence(confidence)
+                // 真算:置信分=数据完备度(有销售+利润数 0.90 / 空月 0.40),据当月实际数据算出
+                .confidenceSource("computed")
                 .promptFingerprint("monthly-report-v1")
                 .fallbackText(execDraft)
                 .build(), force);

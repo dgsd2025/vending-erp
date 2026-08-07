@@ -36,6 +36,8 @@ public class PdcaDtos {
         private String sourceRefType;
         private Long sourceRefId;
         private Boolean aiDraft;
+        /** AI 起草时的调用记录 id(🔬 四件套入口);人工登记为空 */
+        private Long llmCallId;
     }
 
     /** 改进任务行(列表/详情通用) */

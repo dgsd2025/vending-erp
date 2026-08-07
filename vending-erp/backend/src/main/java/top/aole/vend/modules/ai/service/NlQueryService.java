@@ -11,9 +11,10 @@ import top.aole.vend.common.config.LlmProperties;
 import top.aole.vend.common.exception.BizException;
 import top.aole.vend.modules.ai.domain.AiScenes;
 
+import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -43,6 +44,14 @@ public class NlQueryService {
     /** 识别 SQL 里出现的表名(FROM/JOIN 后的标识符) */
     private static final Pattern TABLE_REF = Pattern.compile(
             "(?:from|join)\\s+([a-zA-Z_][a-zA-Z0-9_]*)", Pattern.CASE_INSENSITIVE);
+    /**
+     * 抓 FROM 子句主体(from 到下一个 SQL 子句关键字或 join/结尾前的部分)。
+     * 逗号连表(SELECT * FROM a, b)是隐式交叉连接:TABLE_REF 只认 from/join 后的第一个表,
+     * 逗号后的表既无 from 也无 join → 正则漏检 → 绕过白名单。本模式专门把 FROM 子句抠出来查逗号。
+     */
+    private static final Pattern FROM_CLAUSE = Pattern.compile(
+            "\\bfrom\\b(.*?)(?=\\bwhere\\b|\\bgroup\\b|\\bhaving\\b|\\border\\b|\\blimit\\b|\\bunion\\b|\\bjoin\\b|$)",
+            Pattern.CASE_INSENSITIVE | Pattern.DOTALL);
 
     private final JdbcTemplate jdbcTemplate;
     private final LlmGateway llmGateway;
@@ -91,7 +100,8 @@ public class NlQueryService {
             throw new BizException("请先输入要查什么");
         }
         // NL → SQL(mock:模板匹配;真 key:LLM text2SQL,生成后仍过闸)
-        Template tpl = matchTemplate(nl);
+        Match match = matchBest(nl);
+        Template tpl = match.getTpl();
         String sql;
         String matched;
         if (tpl != null) {
@@ -106,6 +116,12 @@ public class NlQueryService {
         String safeSql = enforceSafety(sql); // 闸1+闸2,LLM 生成也照过
         List<Map<String, Object>> rows = jdbcTemplate.queryForList(safeSql);
 
+        // 置信分真算:命中模板的关键词占比(matchRatio)映射到 0.50~0.90;未命中给低基准 0.30。
+        // matchRatio = 命中关键词数 / 该模板关键词总数,越贴合问题越高。
+        BigDecimal confidence = tpl != null
+                ? new BigDecimal(0.50 + 0.40 * match.getRatio()).setScale(2, RoundingMode.HALF_UP)
+                : new BigDecimal("0.30");
+
         String draft = String.format("[MOCK] 按「%s」查得 %d 行结果。%s", matched, rows.size(),
                 llmProperties.isConfigured() ? "" : "(实验性:mock 用预置模板匹配,真网关接入后支持任意提问)");
         LlmGateway.GatewayResult gw = llmGateway.invoke(LlmGateway.LlmTask.builder()
@@ -115,8 +131,10 @@ public class NlQueryService {
                         + "\n草稿:" + draft)
                 .reasoning("NL→SQL:mock 模板匹配「" + matched + "」;执行前过安全闸(仅 SELECT 白名单视图+LIMIT)。SQL=" + safeSql)
                 .inputDigest(new JSONObject().set("question", nl).set("sql", safeSql)
-                        .set("rowCount", rows.size()).toString())
-                .confidence(tpl != null ? new java.math.BigDecimal("0.85") : new java.math.BigDecimal("0.40"))
+                        .set("rowCount", rows.size()).set("matchRatio", match.getRatio()).toString())
+                .confidence(confidence)
+                // 真算:置信=模板匹配度(命中关键词占比);未命中走兜底表则低置信
+                .confidenceSource("computed")
                 .promptFingerprint("nlquery-v1")
                 .fallbackText(draft)
                 .build(), force);
@@ -159,6 +177,14 @@ public class NlQueryService {
         if (FORBIDDEN.matcher(lower).find()) {
             throw new BizException("拒绝执行:检测到写操作关键字");
         }
+        // 闸1.0(P1-1 补漏):禁止逗号连表——FROM 子句里出现逗号 = 隐式多表交叉连接,
+        // 只允许「单表 或 显式 JOIN 白名单视图」。逗号后的表正则数不到,会绕过白名单,直接拒。
+        java.util.regex.Matcher fromM = FROM_CLAUSE.matcher(lower);
+        while (fromM.find()) {
+            if (fromM.group(1).contains(",")) {
+                throw new BizException("拒绝执行:不允许逗号连表(隐式多表),只允许单表或显式 JOIN 白名单视图");
+            }
+        }
         // 闸1:所有 FROM/JOIN 的表名必须在白名单
         java.util.regex.Matcher m = TABLE_REF.matcher(lower);
         boolean sawTable = false;
@@ -180,10 +206,18 @@ public class NlQueryService {
         return sql;
     }
 
-    private Template matchTemplate(String nl) {
+    /** 模板匹配结果:命中的模板 + 匹配度(命中关键词/该模板关键词总数);未命中 tpl=null,ratio=0 */
+    @Value
+    static class Match {
+        Template tpl;
+        double ratio;
+    }
+
+    private Match matchBest(String nl) {
         String q = nl.toLowerCase();
         Template best = null;
         int bestHits = 0;
+        int bestKw = 1;
         for (Template t : TEMPLATES) {
             int hits = 0;
             for (String kw : t.getKeywords()) {
@@ -194,8 +228,9 @@ public class NlQueryService {
             if (hits > bestHits) {
                 bestHits = hits;
                 best = t;
+                bestKw = t.getKeywords().size();
             }
         }
-        return bestHits > 0 ? best : null;
+        return bestHits > 0 ? new Match(best, (double) bestHits / bestKw) : new Match(null, 0);
     }
 }

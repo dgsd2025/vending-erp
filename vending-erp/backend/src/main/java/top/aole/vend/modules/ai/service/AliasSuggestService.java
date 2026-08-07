@@ -106,6 +106,8 @@ public class AliasSuggestService {
                     .reasoning(reasoning.toString())
                     .inputDigest(digest.toString())
                     .confidence(best.getScore())
+                    // 真算:置信分=规则算出的相似度(条码/名称/编辑距离),非固定档
+                    .confidenceSource("computed")
                     .promptFingerprint("alias-suggest-v1")
                     .fallbackText(draft)
                     .build(), force);

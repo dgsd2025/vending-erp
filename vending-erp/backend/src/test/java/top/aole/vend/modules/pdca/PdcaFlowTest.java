@@ -17,6 +17,7 @@ import top.aole.vend.modules.pdca.mapper.ActionItemMapper;
 import top.aole.vend.modules.pdca.service.ActionItemService;
 import top.aole.vend.modules.pdca.service.PdcaBoardService;
 import top.aole.vend.modules.pdca.service.PdcaMetricService;
+import top.aole.vend.modules.pdca.service.PdcaRecheckScheduler;
 import top.aole.vend.modules.prekit.domain.entity.PrekitTicket;
 import top.aole.vend.modules.prekit.mapper.PrekitTicketMapper;
 import top.aole.vend.modules.stocktake.dto.StocktakeDtos;
@@ -63,6 +64,8 @@ class PdcaFlowTest extends BaseIntegrationTest {
     private MachineMapper machineMapper;
     @Autowired
     private PrekitTicketMapper prekitTicketMapper;
+    @Autowired
+    private PdcaRecheckScheduler recheckScheduler;
 
     // ============================== 造数工具 ==============================
 
@@ -342,6 +345,47 @@ class PdcaFlowTest extends BaseIntegrationTest {
     }
 
     // ============================== 附:登记基线 + 终态保护 ==============================
+
+    // ============================== P1-2:到期自动回查调度器 ==============================
+
+    @Test
+    @DisplayName("P1-2:@Scheduled 执行体 runRecheckDue 触发一次——到期任务被自动回查,未到期不动")
+    void schedulerRecheckDue() {
+        Product p = product("定时回查品");
+        completedStocktakeWithLoss(p.getId(), "100", "90", "过期报损"); // ¥35
+        Long due = item(ActionItem.SCENE_STOCKTAKE, PdcaMetricService.K_LOSS_AMOUNT, "过期报损",
+                "50", "<=", LocalDate.now().minusDays(1)); // 到期,¥35≤50 → 通过
+        Long notDue = item(ActionItem.SCENE_STOCKTAKE, PdcaMetricService.K_LOSS_AMOUNT, "过期报损",
+                "50", "<=", LocalDate.now().plusDays(30)); // 未到期,不动
+
+        PdcaDtos.RecheckBatchResp resp = recheckScheduler.runRecheckDue();
+        assertTrue(resp.getTotal() >= 1, "至少回查到本例的到期任务");
+        assertEquals(ActionItem.ST_PASSED, actionItemMapper.selectById(due).getItemStatus());
+        assertEquals(ActionItem.ST_OPEN, actionItemMapper.selectById(notDue).getItemStatus());
+        assertNull(actionItemMapper.selectById(notDue).getVerifiedAt(), "未到期任务不被触碰");
+    }
+
+    // ============================== P2-4:盘亏起草接 #7 AI 服务 ==============================
+
+    @Test
+    @DisplayName("P2-4:盘亏起草改由 #7 AI 起草服务出措施(mock 带 [MOCK]),标 ai_draft=1 + llm_call_id,采纳落库")
+    void draftFromStocktakeUsesAiDraft() {
+        Product p = product("AI起草损耗品");
+        Long stId = completedStocktakeWithLoss(p.getId(), "100", "90", "过期报损"); // 改进空间原因
+
+        PdcaDtos.DraftResp resp = actionItemService.draftFromStocktake(stId);
+        assertEquals(1, resp.getDrafts().size());
+        PdcaDtos.ItemSaveReq d = resp.getDrafts().get(0);
+        assertTrue(Boolean.TRUE.equals(d.getAiDraft()), "措施来自 AI 起草服务(注入即用)");
+        assertNotNull(d.getLlmCallId(), "挂 llm_call_id(🔬 四件套入口)");
+        assertTrue(d.getMeasure().contains("[MOCK]"), "mock 网关文案带 [MOCK]:" + d.getMeasure());
+
+        // 采纳落库:ai_draft / llm_call_id 落到 action_item
+        Long id = actionItemService.create(d, OP, "老板");
+        ActionItem saved = actionItemMapper.selectById(id);
+        assertTrue(Boolean.TRUE.equals(saved.getAiDraft()));
+        assertEquals(d.getLlmCallId(), saved.getLlmCallId());
+    }
 
     @Test
     @DisplayName("登记即取基线值;终态(验证通过)不许再回查/编辑;手动关闭必填原因")

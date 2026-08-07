@@ -51,6 +51,9 @@ public class LlmCallLog implements Serializable {
     /** 置信分(四件套;规则置信=数据完备度) */
     private BigDecimal confidence;
 
+    /** 置信分来源:computed=规则真算(相似度/偏离度/完备度) | fixed=固定基准置信(规则未覆盖) */
+    private String confidenceSource;
+
     private Integer tokensIn;
 
     private Integer tokensOut;

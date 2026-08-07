@@ -13,6 +13,7 @@ import top.aole.vend.modules.money.domain.entity.Attachment;
 import top.aole.vend.modules.money.mapper.AttachmentMapper;
 
 import java.math.BigDecimal;
+import java.math.RoundingMode;
 import java.time.LocalDate;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
@@ -83,6 +84,29 @@ public class CredentialOcrService {
         String draft = String.format("%s识别到金额 %s 元,日期 %s,对方「%s」,已预填表单,请人工核对修改。",
                 prefix, extracted.getStr("amount"), extracted.getStr("bizDate"), extracted.getStr("counterparty"));
 
+        // 置信分口径:
+        // - 真 key(vision):真算=字段完备度(金额/日期/对方 三项中识别到几项)/3,越全越可信;
+        // - mock 断路:金额从文件名抠、日期取今天、对方是占位——不是识别结果,给固定基准低置信 0.30,诚实标 fixed。
+        BigDecimal confidence;
+        String confidenceSource;
+        if (llmProperties.isConfigured()) {
+            int filled = 0;
+            if (extracted.get("amount") != null) {
+                filled++;
+            }
+            if (cn.hutool.core.util.StrUtil.isNotBlank(extracted.getStr("bizDate"))) {
+                filled++;
+            }
+            if (cn.hutool.core.util.StrUtil.isNotBlank(extracted.getStr("counterparty"))) {
+                filled++;
+            }
+            confidence = new BigDecimal(filled).divide(new BigDecimal(3), 2, RoundingMode.HALF_UP);
+            confidenceSource = "computed";
+        } else {
+            confidence = new BigDecimal("0.30");
+            confidenceSource = "fixed";
+        }
+
         // 真调用(vision)已在 visionExtract 里发生 / mock 无调用 → 走 record 落四件套,不再二次对话
         LlmGateway.GatewayResult result = llmGateway.record(LlmGateway.LlmTask.builder()
                 .scene(AiScenes.OCR)
@@ -95,7 +119,8 @@ public class CredentialOcrService {
                         .set("attType", att.getAttType())
                         .set("refType", att.getRefType())
                         .set("refId", att.getRefId()).toString())
-                .confidence(llmProperties.isConfigured() ? new BigDecimal("0.80") : new BigDecimal("0.30"))
+                .confidence(confidence)
+                .confidenceSource(confidenceSource)
                 .promptFingerprint("credential-ocr-v1")
                 .fallbackText(draft)
                 .build(), top.aole.vend.modules.ai.domain.LlmReply.mock(draft), force);

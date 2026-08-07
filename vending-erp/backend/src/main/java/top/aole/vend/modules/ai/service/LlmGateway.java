@@ -57,6 +57,8 @@ public class LlmGateway {
         private String inputDigest;
         /** 四件套·置信分(规则真算,如数据完备度) */
         private BigDecimal confidence;
+        /** 置信分来源:computed=规则真算 / fixed=固定基准置信(规则未覆盖);空则网关按 fixed 保守处理 */
+        private String confidenceSource;
         /** Prompt 模板指纹(版本追踪) */
         private String promptFingerprint;
         /** 失败降级文案(规则草稿);null = 失败直接抛 */
@@ -118,6 +120,8 @@ public class LlmGateway {
         call.setReasoning(task.getReasoning());
         call.setOutputText(outputText);
         call.setConfidence(task.getConfidence());
+        // 诚实标注:未显式声明来源 = 保守按 fixed(不敢号称真算)
+        call.setConfidenceSource(StrUtil.blankToDefault(task.getConfidenceSource(), "fixed"));
         call.setTokensIn(tokensIn);
         call.setTokensOut(tokensOut);
         call.setDurationMs((int) (System.currentTimeMillis() - start));
@@ -150,6 +154,7 @@ public class LlmGateway {
         call.setReasoning(task.getReasoning());
         call.setOutputText(reply.getText());
         call.setConfidence(task.getConfidence());
+        call.setConfidenceSource(StrUtil.blankToDefault(task.getConfidenceSource(), "fixed"));
         call.setTokensIn(reply.getTokensIn());
         call.setTokensOut(reply.getTokensOut());
         call.setDurationMs(0);

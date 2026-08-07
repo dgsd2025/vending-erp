@@ -38,6 +38,8 @@ public class LlmTransparencyService {
         resp.put("reasoning", log.getReasoning());        // ① 推理过程
         resp.put("outputText", log.getOutputText());      // ② 完整输出
         resp.put("confidence", log.getConfidence());      // ③ 确信分
+        // ③ 确信分来源:computed=规则真算 / fixed=固定基准置信(规则未覆盖)——前端 Tab③ 据此显示口径,不再一律号称"真算"
+        resp.put("confidenceSource", log.getConfidenceSource() == null ? "fixed" : log.getConfidenceSource());
         resp.put("inputDigest", log.getInputDigest());    // ④ 原始数据
         // 成本透明
         Map<String, Object> cost = new LinkedHashMap<>();

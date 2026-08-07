@@ -6,6 +6,7 @@ import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import top.aole.vend.common.exception.BizException;
+import top.aole.vend.modules.ai.domain.IPdcaDraftService;
 import top.aole.vend.modules.basedata.application.OpLogService;
 import top.aole.vend.modules.pdca.domain.entity.ActionItem;
 import top.aole.vend.modules.pdca.dto.PdcaDtos;
@@ -59,6 +60,8 @@ public class ActionItemService {
     private final OpLogService opLogService;
     private final StocktakeMapper stocktakeMapper;
     private final StocktakeItemMapper stocktakeItemMapper;
+    /** 接入点#7:AI 起草改进措施(mock 网关,真 key 自动升级);M4-8 P2-4 兑现"注入即用" */
+    private final IPdcaDraftService pdcaDraftService;
 
     // ============================== CRUD ==============================
 
@@ -69,6 +72,7 @@ public class ActionItemService {
         apply(item, req);
         item.setItemStatus(ActionItem.ST_OPEN);
         item.setAiDraft(Boolean.TRUE.equals(req.getAiDraft()));
+        item.setLlmCallId(req.getLlmCallId());
         item.setCreateUser(userId);
         // 登记即取一次基线值:改进前的起点,回查报告"从多少改到多少"才有对照
         PdcaMetricService.Resolved base = metricService.resolve(item.getMetricKey(), item.getMetricParam());
@@ -276,8 +280,6 @@ public class ActionItemService {
             draft.setSourceScene(ActionItem.SCENE_STOCKTAKE);
             draft.setProblemDesc(month + " 盘点(" + st.getStNo() + ")「" + reason + "」损耗 "
                     + countByReason.get(reason) + " 行 · ¥" + amount);
-            // TODO(M4-5 AI 票):此处接 LLM 网关起草个性化措施(基于品名/货道分布),现为规则版预填
-            draft.setMeasure(MEASURE_SUGGEST.getOrDefault(reason, "现场排查后补写措施"));
             draft.setMetricKey(PdcaMetricService.K_LOSS_AMOUNT);
             draft.setMetricParam(reason);
             // 目标:损耗额减半,最低压到 ¥10 线(mockup "过期报损<¥10/月" 同款)
@@ -289,9 +291,38 @@ public class ActionItemService {
             draft.setVerifyDate(nextMonthly);
             draft.setSourceRefType(REF_STOCKTAKE);
             draft.setSourceRefId(stocktakeId);
+            // M4-8 P2-4:措施改由 #7 AI 起草服务出(mock 网关落四件套+idempotent);
+            // 网关异常时退回硬编码 MEASURE_SUGGEST(业务不断),诚实不号称 AI。
+            applyMeasure(draft, reason, amount, target, st, month, stocktakeId);
             resp.getDrafts().add(draft);
         }
         return resp;
+    }
+
+    /**
+     * 填措施:优先走 #7 AI 起草服务(mock 网关,真 key 自动升级),拿到即标 ai_draft=1 + llm_call_id;
+     * 网关异常 → 退回硬编码 MEASURE_SUGGEST(fallback),ai_draft 保持空,不冒认 AI。
+     */
+    private void applyMeasure(PdcaDtos.ItemSaveReq draft, String reason, BigDecimal amount,
+                              BigDecimal target, Stocktake st, String month, Long stocktakeId) {
+        try {
+            IPdcaDraftService.PdcaDraftResult ai = pdcaDraftService.draft(
+                    IPdcaDraftService.PdcaDraftReq.builder()
+                            .bizKey("stocktake:" + stocktakeId + ":" + reason)
+                            .metricName("「" + reason + "」当月损耗额")
+                            .actualValue(amount)
+                            .targetValue(target)
+                            .scope(st.getStNo() + " · " + month)
+                            .context("盘亏原因=" + reason + ",目标=损耗额减半压到 ¥" + target + " 以下")
+                            .build());
+            draft.setMeasure(ai.getMeasureDetail());
+            draft.setAiDraft(Boolean.TRUE);
+            draft.setLlmCallId(ai.getLlmCallId());
+        } catch (Exception ex) {
+            // fallback:AI 网关不可用,退回规则版预填,诚实标 ai_draft=false
+            draft.setMeasure(MEASURE_SUGGEST.getOrDefault(reason, "现场排查后补写措施"));
+            draft.setAiDraft(Boolean.FALSE);
+        }
     }
 
     // ============================== 内部 ==============================

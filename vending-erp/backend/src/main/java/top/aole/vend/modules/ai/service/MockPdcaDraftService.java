@@ -57,7 +57,9 @@ public class MockPdcaDraftService implements IPdcaDraftService {
                 .reasoning("pdca 规则引擎判红灯(LLM 未参与判定):" + metric + " 实际 "
                         + req.getActualValue() + " vs 目标 " + target)
                 .inputDigest(digest.toString())
+                // 诚实标注:mock 起草是套模板文案,置信给固定基准档 0.80,不号称真算(规则未覆盖措施质量)
                 .confidence(new BigDecimal("0.80"))
+                .confidenceSource("fixed")
                 .promptFingerprint("pdca-draft-v1")
                 .fallbackText(draft)
                 .build(), req.isForce());

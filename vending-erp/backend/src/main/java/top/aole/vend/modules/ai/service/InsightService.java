@@ -67,6 +67,8 @@ public class InsightService {
                 .reasoning(digest.reasoning)
                 .inputDigest(digest.dataJson)
                 .confidence(digest.confidence)
+                // 真算:置信分=数据完备度(有数据 0.90 / 空数据 0.30),按本挂点当期数据是否齐全算出
+                .confidenceSource("computed")
                 .promptFingerprint("insight-" + subScene + "-v1")
                 .fallbackText(digest.draft)
                 .build(), force);

@@ -349,4 +349,78 @@ class AiFamilyTest extends BaseIntegrationTest {
             assertThat(c).as(v + " 可查").isNotNull();
         }
     }
+
+    // ============================== 10. #6 安全闸 P1-1:逗号连表 ==============================
+
+    @Test
+    @DisplayName("#6 P1-1:逗号连表被拒(白名单外表 + 纯白名单视图都拒),单表仍放行")
+    void nlCommaJoinRejected() {
+        // 逗号连非白名单业务表:正则数表名漏掉逗号后的表,靠逗号闸拦下(否则会读到用户表)
+        assertThatThrownBy(() -> nlQueryService.enforceSafety("SELECT * FROM v_ai_loss, yc_vend_user"))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("逗号连表");
+        // 两个白名单视图逗号连也拒(强制单表白名单视图,不许隐式交叉连接)
+        assertThatThrownBy(() -> nlQueryService.enforceSafety("SELECT * FROM v_ai_loss, v_ai_cash_summary"))
+                .isInstanceOf(BizException.class)
+                .hasMessageContaining("逗号连表");
+        // 反例:单表白名单视图仍放行(自动补 LIMIT)
+        assertThat(nlQueryService.enforceSafety("SELECT 月份 FROM v_ai_loss").toLowerCase()).contains("limit");
+    }
+
+    // ============================== 11. #4 归因 P1-2:只认服务端 key ==============================
+
+    @Test
+    @DisplayName("#4 P1-2:归因只收 key,服务端重侦测用自算 metrics;未知 key 拒;confidence_source=computed")
+    void anomalyExplainByKeyServerSide() {
+        Long pid = seedProductId();
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        for (int i = 0; i < 10; i++) {
+            insertSale(1L, pid, "1", "正常", now.minusDays(10));
+        }
+        for (int i = 0; i < 3; i++) {
+            insertSale(1L, pid, "1", "正常", now.minusDays(2));
+        }
+        AnomalyService.Anomaly swing = anomalyService.detect().stream()
+                .filter(a -> "sales-swing".equals(a.getType()))
+                .findFirst().orElseThrow(() -> new AssertionError("应侦测到销量骤变"));
+
+        // 入口只收 key:客户端就算塞假 metrics 也进不来
+        Map<String, Object> ex = anomalyService.explainByKey(swing.getKey(), false);
+        assertThat(ex.get("text").toString()).isNotBlank();
+        Long callId = ((Number) ex.get("llmCallId")).longValue();
+
+        // 落库原始数据来自服务端重算(含真实前/近7天件数),置信来源=computed(偏离度真算)
+        LlmCallLog log = llmCallLogMapper.selectById(callId);
+        assertThat(log.getInputDigest()).contains("prev7dQty").contains("cur7dQty");
+        assertThat(log.getConfidenceSource()).isEqualTo("computed");
+
+        // 未知 key 直接拒(拿不到伪造 key 的归因)
+        assertThatThrownBy(() -> anomalyService.explainByKey("sales-swing:999999:888888", false))
+                .isInstanceOf(BizException.class);
+    }
+
+    // ============================== 12. P1-1:置信分来源诚实标注 ==============================
+
+    @Test
+    @DisplayName("P1-1:别名=computed(真算相似度),pdca起草=fixed(固定基准)——不宣称真算却写死")
+    void confidenceSourceHonest() {
+        product("SP-COKE", "可口可乐330ml", "6901234500011");
+        pending("可口可乐", "6901234500011");
+        aliasSuggestService.suggestAll(false);
+        LlmCallLog aliasLog = llmCallLogMapper.selectOne(new LambdaQueryWrapper<LlmCallLog>()
+                .eq(LlmCallLog::getScene, AiScenes.ALIAS.getLabel())
+                .orderByDesc(LlmCallLog::getId).last("LIMIT 1"));
+        assertThat(aliasLog.getConfidenceSource()).isEqualTo("computed");
+
+        pdcaDraftService.draft(IPdcaDraftService.PdcaDraftReq.builder()
+                .bizKey("check:9:动销率:conf-test")
+                .metricName("动销率")
+                .actualValue(new BigDecimal("0.30"))
+                .targetValue(new BigDecimal("0.80"))
+                .build());
+        LlmCallLog pdcaLog = llmCallLogMapper.selectOne(new LambdaQueryWrapper<LlmCallLog>()
+                .eq(LlmCallLog::getScene, "PDCA起草:动销率")
+                .orderByDesc(LlmCallLog::getId).last("LIMIT 1"));
+        assertThat(pdcaLog.getConfidenceSource()).isEqualTo("fixed");
+    }
 }

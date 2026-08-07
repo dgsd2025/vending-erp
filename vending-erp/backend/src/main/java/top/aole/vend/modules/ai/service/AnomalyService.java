@@ -1,5 +1,6 @@
 package top.aole.vend.modules.ai.service;
 
+import cn.hutool.core.util.StrUtil;
 import cn.hutool.json.JSONObject;
 import lombok.Data;
 import lombok.RequiredArgsConstructor;
@@ -52,6 +53,8 @@ public class AnomalyService {
         private String title;
         /** 严重度:红/黄 */
         private String severity;
+        /** 置信分(规则真算:按偏离阈值的程度算,越离谱越高;非固定档) */
+        private BigDecimal confidence;
         /** 规则算出的数字明细(前端表格 + LLM 原始数据) */
         private Map<String, Object> metrics = new LinkedHashMap<>();
     }
@@ -65,7 +68,25 @@ public class AnomalyService {
         return list;
     }
 
-    /** 给一条异常挂归因叙事(LLM mock;idempotent key = 异常key+当日) */
+    /**
+     * 归因叙事入口(P1-2 安全修复):只收 key,服务端重新 detect() 定位那条异常,
+     * 用**服务端算出的 metrics** 起草——不吃客户端传来的数字/幂等键,杜绝伪造数字与缓存投毒。
+     */
+    public Map<String, Object> explainByKey(String key, boolean force) {
+        if (StrUtil.isBlank(key)) {
+            throw new BizException("缺少异常 key,先调 GET /v1/ai/anomalies 拿清单再选一条");
+        }
+        Anomaly found = detect().stream()
+                .filter(a -> key.equals(a.getKey()))
+                .findFirst()
+                .orElseThrow(() -> new BizException("异常不存在或已消解:" + key + "(请刷新异常清单后重试)"));
+        return explain(found, force);
+    }
+
+    /**
+     * 给一条异常挂归因叙事(LLM mock;idempotent key = 异常key+当日)。
+     * anomaly 必须来自服务端 {@link #detect()}(数字为规则引擎所算);对外入口一律走 {@link #explainByKey}。
+     */
     public Map<String, Object> explain(Anomaly anomaly, boolean force) {
         if (anomaly == null || anomaly.getKey() == null) {
             throw new BizException("缺少异常明细(key/metrics),先调 GET /v1/ai/anomalies 拿清单");
@@ -80,7 +101,9 @@ public class AnomalyService {
                         + "\n异常明细:" + new JSONObject(anomaly.getMetrics()))
                 .reasoning("规则侦测过程(LLM 未参与):" + anomaly.getTitle() + ";阈值与口径见 AnomalyService 注释。")
                 .inputDigest(new JSONObject(anomaly.getMetrics()).toString())
-                .confidence(new BigDecimal("0.85"))
+                // 真算:置信=规则偏离度(超阈越多越高),侦测时算好挂在 anomaly.confidence
+                .confidence(anomaly.getConfidence() == null ? new BigDecimal("0.85") : anomaly.getConfidence())
+                .confidenceSource("computed")
                 .promptFingerprint("anomaly-explain-v1")
                 .fallbackText(draft)
                 .build(), force);
@@ -129,6 +152,8 @@ public class AnomalyService {
                     r.get("machineName"), r.get("productName"), pct,
                     prev.stripTrailingZeros().toPlainString(), cur.stripTrailingZeros().toPlainString()));
             a.setSeverity(change.compareTo(BigDecimal.ZERO) < 0 ? "红" : "黄");
+            // 真算置信:环比偏离越大越确信是真异常(±50% 阈值起步,封顶 0.99)
+            a.setConfidence(deviationConfidence(change.abs()));
             a.getMetrics().put("machineName", r.get("machineName"));
             a.getMetrics().put("productName", r.get("productName"));
             a.getMetrics().put("prev7dQty", prev);
@@ -163,6 +188,8 @@ public class AnomalyService {
             a.setTitle(String.format("盘点单 %s(%s)差异金额 %.2f 元,超 ±%.0f 阈值(%s 行有差异)",
                     r.get("stNo"), r.get("place"), amt, STOCKTAKE_THRESHOLD, r.get("diffLines")));
             a.setSeverity("红");
+            // 真算置信:盘差金额超 ¥50 阈值越多越确信
+            a.setConfidence(exceedConfidence(amt.abs(), STOCKTAKE_THRESHOLD));
             a.getMetrics().putAll(r);
             a.getMetrics().put("threshold", STOCKTAKE_THRESHOLD);
             out.add(a);
@@ -186,10 +213,44 @@ public class AnomalyService {
             a.setKey("settle-diff:" + r.get("id"));
             a.setTitle(String.format("结算单 %s 差异:销售差 %s 元 / 到账差 %s 元(状态:%s)",
                     r.get("stmtNo"), r.get("diffSales"), r.get("diffArrival"), r.get("stlStatus")));
-            a.setSeverity("差异挂起".equals(r.get("stlStatus")) ? "红" : "黄");
+            boolean suspended = "差异挂起".equals(r.get("stlStatus"));
+            a.setSeverity(suspended ? "红" : "黄");
+            // 真算置信:差异挂起=已被规则明确标红,给高置信 0.90;否则按两差合计超 ¥10 阈值的程度算
+            BigDecimal diffSum = absOf(r.get("diffSales")).add(absOf(r.get("diffArrival")));
+            a.setConfidence(suspended ? new BigDecimal("0.90") : exceedConfidence(diffSum, SETTLE_THRESHOLD));
             a.getMetrics().putAll(r);
             a.getMetrics().put("口径", "差异①=系统销售额−平台账单;差异②=预计到账−实际到账(§7.3)");
             out.add(a);
+        }
+    }
+
+    // ============================== 置信分真算(偏离度) ==============================
+
+    /** 比率偏离度→置信:dev 为偏离比率(如 0.7 = 偏离 70%),夹到 [0.50, 0.99] */
+    private static BigDecimal deviationConfidence(BigDecimal dev) {
+        return dev.min(new BigDecimal("0.99")).max(new BigDecimal("0.50")).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /** 金额超阈度→置信:magnitude 越超过 threshold 越高;conf = 0.5 + 0.5*(1 − threshold/magnitude),封顶 0.99 */
+    private static BigDecimal exceedConfidence(BigDecimal magnitude, BigDecimal threshold) {
+        if (magnitude == null || magnitude.signum() <= 0 || threshold == null || threshold.signum() <= 0) {
+            return new BigDecimal("0.60");
+        }
+        BigDecimal ratio = threshold.divide(magnitude, 4, RoundingMode.HALF_UP).min(BigDecimal.ONE);
+        BigDecimal conf = new BigDecimal("0.50")
+                .add(new BigDecimal("0.50").multiply(BigDecimal.ONE.subtract(ratio)));
+        return conf.min(new BigDecimal("0.99")).setScale(2, RoundingMode.HALF_UP);
+    }
+
+    /** 安全取绝对值(字段可能为 null / 非数字) */
+    private static BigDecimal absOf(Object v) {
+        if (v == null) {
+            return BigDecimal.ZERO;
+        }
+        try {
+            return new BigDecimal(v.toString()).abs();
+        } catch (NumberFormatException e) {
+            return BigDecimal.ZERO;
         }
     }
 
