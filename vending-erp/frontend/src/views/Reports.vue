@@ -7,6 +7,7 @@ import {
   type InventorySummaryResp,
 } from '@/api/report'
 import { finreportApi, type ProfitResp } from '@/api/finreport'
+import NlQueryBox from '@/components/ai/NlQueryBox.vue'
 
 /**
  * 报表页(M1-6):毛利报表(月份切换 × SKU/机器两维)+ 月度进销存汇总。
@@ -77,6 +78,9 @@ const fmtQty = (v: number | null | undefined) => (v == null ? '—' : Number(v).
         兑换收入 0 但计成本 · 测试不计 · 无采购史 SKU 毛利显「—(成本待补)」不进合计
       </template>
     </el-alert>
+
+    <!-- 问数(接入点#6,实验性):自然语言 → 只读白名单视图 -->
+    <NlQueryBox class="mb-12px" />
 
     <el-card shadow="never" class="mb-12px">
       <div class="flex items-center gap-12px flex-wrap">

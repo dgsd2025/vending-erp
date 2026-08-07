@@ -45,9 +45,10 @@ const groups: { label?: string; items: { path?: string; ico: string; title: stri
   {
     label: 'BI 经营分析',
     items: [
+      { path: '/bi', ico: '📊', title: 'BI 经营分析' },
       { path: '/reports', ico: '📈', title: '报表' },
       { path: '/products', ico: '🧃', title: '商品 · 单品分析' },
-      { ico: '🔄', title: '改进循环 PDCA', milestone: 'M4' },
+      { path: '/pdca', ico: '🔄', title: '改进循环 PDCA' },
     ],
   },
   {

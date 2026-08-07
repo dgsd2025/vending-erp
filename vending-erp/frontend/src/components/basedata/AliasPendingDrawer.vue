@@ -8,20 +8,17 @@ import {
   type AliasPending,
 } from '@/api/basedata'
 import ProductSelect from './ProductSelect.vue'
+import LlmTransparencyBadge from '@/components/ai/LlmTransparencyBadge.vue'
+import { aiApi } from '@/api/ai'
 
 /**
  * 别名待绑定队列抽屉:导入遇到不认识的 编号+条码 进这里,系统给建议、人只点确认。
- * (队列数据由 M1-3 导入模块生产;这里是消费端,接口已立好。)
+ * (队列数据由 M1-3 导入模块生产;这里是消费端。)
  *
- * TODO(M4 接真 AI 前必读,M1-10 P2-6 审计锁定验收标准):
- * 当前后端没有任何写手写 suggest_product_id / ai_confidence(M1 全 mock,LLM 零参与),
- * 置信 chip 界面文案暂用「规则建议」,不许叫「AI」。
- * 接真 AI 的那个 PR 必须连带四件套才许合并(七律#7 + 全局 §4.7 AI 分析开发铁律):
- *   ① 🔬 过程入口(推理过程/完整输出/置信构成/原始数据 四 Tab 弹窗)挂在置信 chip 旁;
- *   ② LLM 调用落 llm_call_log(模型/prompt/tokens/耗时可查);
- *   ③ 建议字段写手与 🔬 入口同 PR 上线,禁止只写字段不带过程;
- *   ④ 数字仍由规则引擎出,AI 只做解释/建议(七律#7)。
- * 后端对应位置:AliasService.bind 的「AI建议采纳」分支——同样锁此验收。
+ * M4-5 兑现 M1-10 P2-6 锁定的验收:AliasSuggestService 是建议写手(规则打分,标「规则建议」),
+ * 写回 suggest_product_id / ai_confidence / llm_call_id;置信 chip 旁挂唯一 🔬 过程入口
+ * (LlmTransparencyBadge,四件套弹窗);LLM(mock)只复核话术,数字由规则引擎出(七律#7)。
+ * 真 key 后走 embedding+LLM 复核,前端零改动。
  */
 const props = defineProps<{ visible: boolean }>()
 
@@ -32,6 +29,7 @@ const emit = defineEmits<{
 
 const rows = ref<AliasPending[]>([])
 const loading = ref(false)
+const suggesting = ref(false)
 const chosen = ref<Record<number, number | null>>({})
 
 async function load() {
@@ -44,6 +42,18 @@ async function load() {
     chosen.value = map
   } finally {
     loading.value = false
+  }
+}
+
+/** 生成归集建议(接入点#1):规则打分写回 suggest/confidence/llm_call_id */
+async function genSuggest() {
+  suggesting.value = true
+  try {
+    const s = await aiApi.aliasSuggest()
+    ElMessage.success(`已生成建议:命中 ${s.suggested ?? 0} 条 · 无匹配 ${s.noMatch ?? 0} 条(${s.mode ?? ''})`)
+    await load()
+  } finally {
+    suggesting.value = false
   }
 }
 
@@ -86,16 +96,20 @@ async function ignore(row: AliasPending) {
     <p class="mini" style="margin-top: 0">
       导入出货明细遇到不认识的「后台编号+条码」会进这里;<b>系统给建议,你只点确认</b>。绑定后由导入模块回补历史销售归属。
     </p>
+    <el-button size="small" type="primary" plain :loading="suggesting" @click="genSuggest" style="margin-bottom: 8px">
+      🤖 生成归集建议
+    </el-button>
     <el-table :data="rows" v-loading="loading" size="small">
       <el-table-column label="后台商品" min-width="170">
         <template #default="{ row }">
           <b>{{ row.aliasName }}</b>
           <div class="mini num">{{ row.aliasCode || '—' }} · {{ row.aliasBarcode || '无条码' }}</div>
           <span class="chip c-gray">出现 {{ row.hitCount }} 次</span>
-          <!-- TODO(P2-6):接真 AI 前文案锁「规则建议」;接真 AI 时此 chip 必须连带 🔬 过程入口(见文件顶部验收标准) -->
+          <!-- M4-5 兑现 P2-6:置信 chip 接真数据源(规则打分)+ 唯一 🔬 过程入口 -->
           <span v-if="row.aiConfidence != null" class="chip c-blue" style="margin-left: 4px">
             规则建议 {{ Math.round(Number(row.aiConfidence) * 100) }}%
           </span>
+          <LlmTransparencyBadge v-if="row.llmCallId != null" :call-id="row.llmCallId" size="mini" />
         </template>
       </el-table-column>
       <el-table-column label="绑到商品" min-width="200">

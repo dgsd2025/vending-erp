@@ -7,6 +7,7 @@ import SupplierTab from '@/components/basedata/SupplierTab.vue'
 import ParamsTab from '@/components/basedata/ParamsTab.vue'
 import PeriodLockSection from '@/components/doc/PeriodLockSection.vue'
 import AccountTab from '@/components/money/AccountTab.vue'
+import AiModelTab from '@/components/ai/AiModelTab.vue'
 import { currentUserName } from '@/api/basedata'
 
 /**
@@ -15,7 +16,7 @@ import { currentUserName } from '@/api/basedata'
  */
 // 支持 /settings?tab=account 直达(M3-3 结算面板「去定型结算模式」入口)
 const route = useRoute()
-const validTabs = ['machine', 'product', 'supplier', 'account', 'params']
+const validTabs = ['machine', 'product', 'supplier', 'account', 'params', 'ai']
 const initTab = typeof route.query.tab === 'string' && validTabs.includes(route.query.tab) ? route.query.tab : 'machine'
 const activeTab = ref(initTab)
 </script>
@@ -48,6 +49,9 @@ const activeTab = ref(initTab)
         <ParamsTab v-if="activeTab === 'params'" />
         <!-- M1-7 锁账小节(P0-2):当前锁账线 / 锁账 / 解锁(老板+备注) / 上期调整一览 -->
         <PeriodLockSection v-if="activeTab === 'params'" />
+      </el-tab-pane>
+      <el-tab-pane label="🤖 AI 模型配置" name="ai">
+        <AiModelTab v-if="activeTab === 'ai'" />
       </el-tab-pane>
     </el-tabs>
 

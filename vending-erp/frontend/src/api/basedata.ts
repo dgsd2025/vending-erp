@@ -53,6 +53,7 @@ export interface AliasPending {
   hitCount: number
   suggestProductId?: number | null
   aiConfidence?: number | null
+  llmCallId?: number | null
   pendingStatus: string
   createTime?: string
 }
