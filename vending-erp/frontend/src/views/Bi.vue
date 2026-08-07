@@ -277,7 +277,7 @@ function goMachine(id: number | null) {
           <span class="text-12px text-gray-400">销售(卖得动) 与 毛利(值得卖) 并排看 —— 卖得多 ≠ 赚得多</span>
         </div>
       </template>
-      <el-radio-group :model-value="activeDim" @change="(v) => onDimChange(v as BiDim)" size="small" class="mb-12px">
+      <el-radio-group :model-value="activeDim" @change="(v: string | number | boolean | undefined) => onDimChange(v as BiDim)" size="small" class="mb-12px">
         <el-radio-button v-for="t in dimTabs" :key="t.key" :value="t.key">{{ t.label }}</el-radio-button>
       </el-radio-group>
 

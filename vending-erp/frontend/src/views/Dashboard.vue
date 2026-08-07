@@ -12,6 +12,9 @@ import { settlementOverview } from '@/api/settlement'
 import AnomalyRadar from '@/components/ai/AnomalyRadar.vue'
 import { supplierOverview } from '@/api/settle'
 import { pdcaApi, type ItemRow } from '@/api/pdca'
+import { finreportApi, type AssetSnapshotResp } from '@/api/finreport'
+import { aiApi } from '@/api/ai'
+import LlmTransparencyBadge from '@/components/ai/LlmTransparencyBadge.vue'
 import { useAppStore } from '@/stores/app'
 
 /**
@@ -41,12 +44,14 @@ async function load() {
       pageAliasPending({ pendingStatus: '待处理', size: 1 }),
     ])
     stock.value = s
-    // 默认月无销售(如只有测试单据的当月)→ 回退到最近一个有销售的月份
+    // 当月销售过小(0 或仅测试噪声,如当月只有几块钱的测试单)→ 回退到最近一个有真实销售的月份,
+    // 避免驾驶舱首屏出现「¥7 / 毛利率 -388%」这类失真数字(自然日单机销售额远高于 ¥100)
     let sku = skuFirst
-    if (Number(sku.totalSalesAmt) === 0 && sku.months.length > 1) {
+    const trivial = (r: GrossMarginResp) => Number(r.totalSalesAmt) < 100
+    if (trivial(sku) && sku.months.length > 1) {
       for (let i = sku.months.length - 2; i >= 0; i--) {
         const prev = await reportApi.grossMargin(sku.months[i], 'sku')
-        if (Number(prev.totalSalesAmt) !== 0) {
+        if (!trivial(prev)) {
           sku = prev
           break
         }
@@ -174,6 +179,37 @@ function gotoDiffPending() {
   if (l && Number(l.diffBillCount) + Number(l.diffPaymentCount) > 0) router.push('/suppliers')
   else router.push('/money')
 }
+
+// M4-6 钱账健康:资产净额(净家底)+ 环比,失败不拖累主加载
+const assets = ref<AssetSnapshotResp | null>(null)
+onMounted(async () => {
+  try {
+    assets.value = await finreportApi.assets()
+  } catch {
+    assets.value = null
+  }
+})
+/** 净家底环比(本期 − 上期),无上期返 null */
+const netAssetMom = computed(() => {
+  const a = assets.value
+  if (!a || a.prevNetAsset == null) return null
+  return Number((Number(a.netAsset) - Number(a.prevNetAsset)).toFixed(2))
+})
+
+// M4-6 AI 经营洞察(接入点#3 解释层:家底环比 mock 解读),失败不拖累主加载
+const insight = ref<{ title: string; text: string; llmCallId: number } | null>(null)
+const insightLoading = ref(false)
+onMounted(async () => {
+  insightLoading.value = true
+  try {
+    const r = await aiApi.insight('asset-mom')
+    insight.value = { title: String(r.title), text: String(r.text), llmCallId: Number(r.llmCallId) }
+  } catch {
+    insight.value = null
+  } finally {
+    insightLoading.value = false
+  }
+})
 </script>
 
 <template>
@@ -185,9 +221,6 @@ function gotoDiffPending() {
     </div>
     <p class="ledger-note">
       一眼看清:<b>卖得怎么样 → 钱赚了多少 → 现在该干什么</b>
-      <span class="chip" :class="stock?.dataAsOf ? 'c-green' : 'c-amber'" style="margin-left: 8px">
-        🕐 数据截至:{{ stock?.dataAsOf ? stock.dataAsOf.replace('T', ' ').slice(0, 16) : '——(尚未导入)' }}
-      </span>
       <span v-if="latestBatch" class="mini" style="margin-left: 6px">
         最近导入:{{ latestBatch.fileType }} · {{ (latestBatch.createTime ?? '').replace('T', ' ').slice(5, 16) }} ✓
       </span>
@@ -345,9 +378,18 @@ function gotoDiffPending() {
           <span v-if="overduePayable" class="chip c-amber">🟡 应付逾期 {{ overduePayable }} 家</span>
         </div>
         <div class="vv num">
-          {{ todayFlowCount == null ? '—' : todayFlowCount }}
-          <span style="font-size: 14px; color: var(--ink2)">笔今日流水</span>
+          {{ assets?.netAsset != null ? money(assets.netAsset) : '—' }}
+          <span style="font-size: 13px; color: var(--ink2)">净家底</span>
+          <span
+            v-if="netAssetMom != null"
+            style="font-size: 13px"
+            :style="{ color: netAssetMom >= 0 ? 'var(--green)' : 'var(--red)' }"
+          >
+            {{ netAssetMom >= 0 ? '▲' : '▼' }} 环比 {{ money(Math.abs(netAssetMom)) }}
+          </span>
         </div>
+        <span class="mini">今日流水 {{ todayFlowCount == null ? '—' : todayFlowCount }} 笔 · 现金 {{ assets?.cashTotal != null ? money(assets.cashTotal) : '—' }}</span>
+        <br />
         <span class="mini" v-if="moneyMode === 'UNSET'" style="color: var(--amber)">⚠️ 结算模式待核实 —— 先定型再谈待结算</span>
         <span class="mini" v-else-if="moneyMode === 'PLATFORM'">平台待结算(在途)¥{{ moneyPending == null ? '—' : moneyPending.toLocaleString('zh-CN', { minimumFractionDigits: 2 }) }}</span>
         <span class="mini" v-else-if="moneyMode === 'DIRECT'">微信/支付宝直连 · 到账核对走月度钱盘</span>
@@ -396,13 +438,28 @@ function gotoDiffPending() {
         </table>
         <el-empty v-if="!gmSku?.rows?.length" description="尚无销售数据" :image-size="60" />
         <p class="mini" style="margin-top: 8px">
-          📈 BI 经营分析(月报 / 问数 / 改进循环 PDCA)· <b>里程碑 4 开放</b>
+          📈 <a class="plink" @click="router.push('/bi')">BI 经营分析(月报 / 问数 / 缺货损失 / 调价对比)→</a>
         </p>
       </div>
     </div>
 
-    <!-- 异常雷达(接入点#4):规则侦测 + AI 归因,🔬 过程可查 -->
-    <AnomalyRadar style="margin-top: 16px" />
+    <!-- AI 经营洞察(接入点#3 解释层):家底环比 mock 解读,数字规则出、AI 只讲人话,🔬 过程可查 -->
+    <div class="ledger-card ai-insight" data-block="ai-insight" style="margin-top: 16px">
+      <h3 style="margin: 0 0 6px">
+        🧠 AI 经营洞察
+        <span class="hint">{{ insight?.title ?? '家底环比解读' }} · 规则算数字 · AI 讲人话</span>
+      </h3>
+      <div v-loading="insightLoading">
+        <p v-if="insight" class="insight-text">
+          {{ insight.text }}
+          <LlmTransparencyBadge :call-id="insight.llmCallId" size="mini" />
+        </p>
+        <p v-else class="mini" style="color: var(--ink2)">洞察暂取不到,去 BI 经营分析页看完整解读。</p>
+      </div>
+    </div>
+
+    <!-- 异常雷达(接入点#4):规则侦测 + AI 归因,🔬 过程可查(驾驶舱只看 TOP 5) -->
+    <AnomalyRadar :limit="5" style="margin-top: 16px" />
 
     <p class="ledger-foot-note">
       — 驾驶舱只读汇总,每个数字都能点进出处;红灯清零是每天的第一目标 —
@@ -575,5 +632,35 @@ function gotoDiffPending() {
   color: var(--green);
   cursor: pointer;
   font-weight: 600;
+}
+.ai-insight .insight-text {
+  font-size: 13px;
+  line-height: 1.7;
+  color: var(--ink);
+  margin: 4px 0 0;
+}
+
+/* ============ 响应式(M4-6:桌面 4 列 / 平板 2 列 / 手机 1 列) ============ */
+@media (max-width: 900px) {
+  .stat-grid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .two-col {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 560px) {
+  .stat-grid {
+    grid-template-columns: 1fr;
+  }
+  .mgrid {
+    grid-template-columns: 1fr;
+  }
+  .work-strip {
+    padding: 12px 14px;
+  }
+  .stat .vv {
+    font-size: 24px;
+  }
 }
 </style>

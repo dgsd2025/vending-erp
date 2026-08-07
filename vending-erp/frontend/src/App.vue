@@ -92,7 +92,7 @@ const isActive = (path?: string) =>
         </template>
       </nav>
       <div class="side-foot">
-        <DataFreshnessBar />
+        <DataFreshnessBar variant="badge" />
         <span class="foot-line">无登录(SSO 接入前占位)· 嵌入智慧园区</span>
       </div>
     </aside>
@@ -108,6 +108,8 @@ const isActive = (path?: string) =>
           </button>
         </template>
       </div>
+      <!-- 全站统一数据新鲜度水印(铁律1):每页顶部,超 3 天灰化 + 建议先导数据 -->
+      <DataFreshnessBar variant="bar" />
       <router-view />
     </main>
   </div>

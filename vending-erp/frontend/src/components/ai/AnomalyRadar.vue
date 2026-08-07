@@ -1,13 +1,27 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { aiApi, type Anomaly } from '@/api/ai'
 import LlmTransparencyBadge from './LlmTransparencyBadge.vue'
 
 /**
  * 驾驶舱「异常雷达」卡(接入点#4):规则引擎侦测异常清单(销量骤变/盘差/结算差异),
  * 每条可展开 LLM 归因叙事(mock)。数字由规则出,LLM 只解释;🔬 过程可查。
+ * limit:驾驶舱只展示 TOP N(红灯优先),其余折叠计数;不传=全展开(独立页用)。
  */
+const props = withDefaults(defineProps<{ limit?: number }>(), { limit: 0 })
+
 const rows = ref<Anomaly[]>([])
+/** 红灯优先排序后按 limit 截断 */
+const shownRows = computed(() => {
+  const sorted = [...rows.value].sort(
+    (a, b) => (a.severity === '红' ? 0 : 1) - (b.severity === '红' ? 0 : 1),
+  )
+  return props.limit > 0 ? sorted.slice(0, props.limit) : sorted
+})
+const hiddenCount = computed(() =>
+  props.limit > 0 ? Math.max(0, rows.value.length - props.limit) : 0,
+)
+const redCount = computed(() => rows.value.filter((r) => r.severity === '红').length)
 const loading = ref(false)
 const explains = ref<Record<string, { text: string; llmCallId: number } | undefined>>({})
 const explaining = ref<Record<string, boolean>>({})
@@ -38,12 +52,15 @@ onMounted(load)
 <template>
   <div class="ledger-card" data-block="anomaly-radar">
     <div class="card-head">
-      <h4>🛰 异常雷达 <span class="chip c-gray">规则侦测 · AI 归因</span></h4>
+      <h4>
+        🛰 异常雷达 <span class="chip c-gray">规则侦测 · AI 归因</span>
+        <span v-if="redCount" class="chip c-red" style="margin-left: 6px">🔴 {{ redCount }} 红</span>
+      </h4>
       <el-button link size="small" @click="load">刷新</el-button>
     </div>
     <div v-loading="loading">
       <el-empty v-if="!rows.length" description="暂无异常,系统很干净 ✓" :image-size="54" />
-      <div v-for="row in rows" :key="row.key" class="anomaly-row">
+      <div v-for="row in shownRows" :key="row.key" class="anomaly-row">
         <div class="anomaly-title">
           <span class="chip" :class="row.severity === '红' ? 'c-red' : 'c-amber'">{{ row.severity }}</span>
           <span>{{ row.title }}</span>
@@ -63,6 +80,9 @@ onMounted(load)
             <LlmTransparencyBadge :call-id="explains[row.key]!.llmCallId" size="mini" />
           </template>
         </div>
+      </div>
+      <div v-if="hiddenCount" class="anomaly-more">
+        还有 {{ hiddenCount }} 条异常(仅显 TOP {{ limit }},红灯优先)· 去 BI 经营分析看全部
       </div>
     </div>
   </div>
@@ -96,5 +116,12 @@ onMounted(load)
   font-size: 12.5px;
   color: var(--ink2, #7a6a48);
   margin-right: 6px;
+}
+.anomaly-more {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px dashed var(--border, #e5dcc6);
+  font-size: 12px;
+  color: var(--ink2, #7a6a48);
 }
 </style>
