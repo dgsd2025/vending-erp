@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import DataFreshnessBar from '@/components/DataFreshnessBar.vue'
+import TourOverlay from '@/components/TourOverlay.vue'
+import { useTour } from '@/composables/useTour'
 import { isOffline, pendingTasks, replayQueue, replaying } from '@/utils/offline-queue'
 
 /**
@@ -53,6 +55,10 @@ const groups: { label?: string; items: { path?: string; ico: string; title: stri
     ],
   },
   {
+    label: '帮助',
+    items: [{ path: '/guide', ico: '🧭', title: '新手指引' }],
+  },
+  {
     label: '系统',
     items: [{ path: '/settings', ico: '⚙️', title: '设置中心' }],
   },
@@ -63,6 +69,11 @@ const isActive = (path?: string) =>
     || (path === '/products' && route.name === 'product-detail')
     || (path === '/settings' && route.name === 'machine-detail')
     || (path === '/tasks' && route.name === 'staff-detail'))
+
+/** 逐页浮层引导:首次进系统自动开一次;右下角「?」随时打开指引 */
+const { autoStartOnce } = useTour()
+onMounted(() => setTimeout(autoStartOnce, 600))
+const openGuide = () => router.push('/guide')
 </script>
 
 <template>
@@ -84,6 +95,7 @@ const isActive = (path?: string) =>
           <a
             v-for="it in g.items"
             :key="it.title"
+            :data-tour="it.path ? it.path.slice(1) : undefined"
             :class="{ on: isActive(it.path), dim: !it.path }"
             @click="it.path && router.push(it.path)"
           >
@@ -113,6 +125,11 @@ const isActive = (path?: string) =>
       <DataFreshnessBar variant="bar" />
       <router-view />
     </main>
+
+    <!-- 全局悬浮「?」:任意页右下角,点开新手指引 -->
+    <button v-if="route.name !== 'guide'" class="help-fab" title="不懂?点我打开指引" @click="openGuide">?</button>
+    <!-- 逐页浮层引导遮罩(带我逛一圈) -->
+    <TourOverlay />
   </div>
 </template>
 
@@ -237,6 +254,39 @@ body {
   padding: 26px 34px 60px;
   max-width: 1220px;
   min-width: 0;
+}
+
+/* 全局悬浮「?」帮助按钮(任意页右下角) */
+.help-fab {
+  position: fixed;
+  right: 26px;
+  bottom: 26px;
+  z-index: 2000;
+  width: 52px;
+  height: 52px;
+  border-radius: 50%;
+  border: none;
+  background: var(--green);
+  color: #fff;
+  font-family: var(--serif);
+  font-size: 26px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 6px 18px rgba(28, 61, 47, 0.35);
+  transition: transform 0.18s, box-shadow 0.18s;
+}
+.help-fab:hover {
+  transform: translateY(-2px) scale(1.05);
+  box-shadow: 0 8px 22px rgba(28, 61, 47, 0.45);
+}
+@media (max-width: 768px) {
+  .help-fab {
+    right: 16px;
+    bottom: 16px;
+    width: 46px;
+    height: 46px;
+    font-size: 22px;
+  }
 }
 
 /* 离线回传黄条(M2-5,全局:盘点/配货单共用) */

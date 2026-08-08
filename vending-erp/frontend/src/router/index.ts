@@ -24,6 +24,7 @@ const router = createRouter({
     { path: '/pdca', name: 'pdca', meta: { title: '改进循环' }, component: () => import('@/views/Pdca.vue') },
     { path: '/bi', name: 'bi', meta: { title: 'BI 经营分析' }, component: () => import('@/views/Bi.vue') },
     { path: '/monthly-report', name: 'monthly-report', meta: { title: '月度报表' }, component: () => import('@/views/MonthlyReport.vue') },
+    { path: '/guide', name: 'guide', meta: { title: '新手指引' }, component: () => import('@/views/Guide.vue') },
   ],
 })
 
