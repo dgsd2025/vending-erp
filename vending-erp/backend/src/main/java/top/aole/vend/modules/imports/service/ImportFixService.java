@@ -40,6 +40,8 @@ public class ImportFixService {
     private final LlmGateway llmGateway;
 
     private static final String PROMPT_FP = "importfix-v1";
+    /** 自动预选的最低相似度(低于此只留候选,不乱填) */
+    private static final double SUGGEST_THRESHOLD = 0.5;
 
     public FixSuggestResp suggest(String token, boolean force) {
         FixContext ctx = importService.peekForFix(token);
@@ -61,12 +63,14 @@ public class ImportFixService {
             m.setRequired(isRequired(ctx, expected));
             List<String> ranked = rankCandidates(expected, ctx.getHeaders(), used);
             m.setCandidates(ranked);
-            if (!ranked.isEmpty()) {
+            // 只有相似度够高(≥0.5)才自动预选,避免"货道号←订单号"这种弱匹配乱填;
+            // 弱匹配仍留在候选里供人工下拉选。
+            if (!ranked.isEmpty() && similarity(expected, ranked.get(0)) >= SUGGEST_THRESHOLD) {
                 m.setSuggested(ranked.get(0));
                 used.add(ranked.get(0));
                 m.setReason("表头「" + ranked.get(0) + "」与「" + expected + "」最接近");
             } else {
-                m.setReason("没找到相近表头,请手动指定");
+                m.setReason(ranked.isEmpty() ? "没找到相近表头,请手动指定" : "没有足够接近的表头,请手动确认");
             }
             mappings.add(m);
         }
