@@ -53,6 +53,52 @@ public final class ImportDtos {
         }
     }
 
+    /** 导入自愈:AI 猜的单条列映射(期望列 ← 文件实际表头) */
+    @Data
+    public static class FixMapping {
+        /** 系统期望的列名 */
+        private String expected;
+        private boolean required;
+        /** AI/规则建议的文件实际表头(null=没猜到) */
+        private String suggested;
+        /** 该期望列的候选实际表头(按相似度排序,供人工下拉改) */
+        private List<String> candidates = new ArrayList<>();
+        /** 建议理由(人话) */
+        private String reason;
+    }
+
+    /** 导入自愈建议结果(接入点#9 IMPORT_FIX) */
+    @Data
+    public static class FixSuggestResp {
+        private String token;
+        private List<FixMapping> mappings = new ArrayList<>();
+        /** 置信分(已猜中的必填列 / 缺失必填列,规则真算) */
+        private BigDecimal confidence;
+        /** 落库的 LLM 调用 id(前端🔬透明四件套据此拉过程) */
+        private Long llmCallId;
+        /** 走了真模型还是 mock 断路 */
+        private String mode;
+    }
+
+    /** 请求:让 AI 猜列映射 */
+    @Data
+    public static class FixSuggestReq {
+        @NotBlank
+        private String token;
+        /** true=重新猜(跳过当日幂等缓存) */
+        private boolean force;
+    }
+
+    /** 请求:按确认后的列映射(期望列→文件实际表头)重新校验预览 */
+    @Data
+    public static class FixApplyReq {
+        @NotBlank
+        private String token;
+        /** 期望列名 → 文件实际表头 */
+        @NotNull
+        private Map<String, String> columnMap;
+    }
+
     /** 第②步确认入参 */
     @Data
     public static class ConfirmReq {

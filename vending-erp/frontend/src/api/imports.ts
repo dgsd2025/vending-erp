@@ -24,6 +24,24 @@ export interface PreviewResp {
   warnings: string[]
 }
 
+/** 导入自愈:单条列映射建议 */
+export interface FixMapping {
+  expected: string
+  required: boolean
+  suggested: string | null
+  candidates: string[]
+  reason: string
+}
+
+/** 导入自愈建议结果 */
+export interface FixSuggestResp {
+  token: string
+  mappings: FixMapping[]
+  confidence: number
+  llmCallId: number | null
+  mode: string
+}
+
 export interface NegativeStock {
   productId: number
   skuCode: string
@@ -207,6 +225,14 @@ export const importsApi = {
   /** 第②步:确认入账 */
   confirm(token: string): Promise<CommitResp> {
     return request.post('/v1/imports/confirm', { token }, { headers: operatorHeader(), timeout: 300000 })
+  },
+  /** 导入自愈:AI 猜列映射(厂家改模板时) */
+  fixSuggest(token: string, force = false): Promise<FixSuggestResp> {
+    return request.post('/v1/imports/fix/suggest', { token, force }, { timeout: 60000 })
+  },
+  /** 导入自愈:按确认的映射重新校验预览 */
+  fixApply(token: string, columnMap: Record<string, string>): Promise<PreviewResp> {
+    return request.post('/v1/imports/fix/apply', { token, columnMap })
   },
   batches(current = 1, size = 20, fileType?: string): Promise<PageResult<ImportBatch>> {
     return request.get('/v1/imports/batches', { params: { current, size, fileType } })

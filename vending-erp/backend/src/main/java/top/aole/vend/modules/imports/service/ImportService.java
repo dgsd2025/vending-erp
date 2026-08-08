@@ -140,6 +140,18 @@ public class ImportService {
         private String fileType;
         private String fileName;
         private String tmpPath;
+        /** 导入自愈:期望列名 → 文件实际表头(厂家改模板后的重映射);空=不重映射 */
+        private Map<String, String> columnMap;
+    }
+
+    /** 导入自愈上下文:给 ImportFixService 猜映射用(不暴露内部暂存结构) */
+    @Data
+    public static class FixContext {
+        private String fileType;
+        private String[][] spec;
+        private List<String> headers;
+        private List<Map<String, String>> sampleRows;
+        private List<String> missingExpected;
     }
 
     // ============================== 第①步:上传解析预览 ==============================
@@ -151,6 +163,26 @@ public class ImportService {
         PreviewResp resp = new PreviewResp();
         resp.setFileName(fileName);
         resp.setFileType(fileType);
+        fillPreview(spec, sheet, resp);
+
+        // 暂存原始文件,等第②步确认
+        String token = IdUtil.fastSimpleUUID();
+        File tmp = new File(storageDir, "tmp/" + token + ".xlsx");
+        FileUtil.writeBytes(content, tmp);
+        PendingUpload pending = new PendingUpload();
+        pending.setFileType(fileType);
+        pending.setFileName(fileName);
+        pending.setTmpPath(tmp.getAbsolutePath());
+        pendingUploads.put(token, pending);
+        resp.setToken(token);
+        return resp;
+    }
+
+    /** 填列校验 + 预览(upload 与导入自愈 applyFix 共用) */
+    private void fillPreview(String[][] spec, ParsedSheet sheet, PreviewResp resp) {
+        resp.getColumnChecks().clear();
+        resp.getWarnings().clear();
+        resp.getPreviewRows().clear();
         resp.setRowTotal(sheet.getRows().size());
         resp.setHeaders(sheet.getHeaders());
         boolean ok = true;
@@ -168,17 +200,94 @@ public class ImportService {
         for (int i = 0; i < previewCount; i++) {
             resp.getPreviewRows().add(sheet.getRows().get(i).getCells());
         }
+    }
 
-        // 暂存原始文件,等第②步确认
-        String token = IdUtil.fastSimpleUUID();
-        File tmp = new File(storageDir, "tmp/" + token + ".xlsx");
-        FileUtil.writeBytes(content, tmp);
-        PendingUpload pending = new PendingUpload();
-        pending.setFileType(fileType);
-        pending.setFileName(fileName);
-        pending.setTmpPath(tmp.getAbsolutePath());
-        pendingUploads.put(token, pending);
+    /**
+     * 导入自愈:按列映射(期望列→文件实际表头)把解析结果的表头改名成期望名。
+     * 改名后下游所有 required(row,"出货数量") 无需改动即可命中。空映射不动。
+     */
+    private void remapHeaders(ParsedSheet sheet, Map<String, String> columnMap) {
+        if (columnMap == null || columnMap.isEmpty()) {
+            return;
+        }
+        // 实际表头 → 期望名(反向,便于按行改 key)
+        Map<String, String> actual2expected = new LinkedHashMap<>();
+        for (Map.Entry<String, String> e : columnMap.entrySet()) {
+            String expected = e.getKey();
+            String actual = e.getValue();
+            if (actual != null && !actual.trim().isEmpty() && !actual.equals(expected)) {
+                actual2expected.put(actual, expected);
+            }
+        }
+        if (actual2expected.isEmpty()) {
+            return;
+        }
+        // 改表头列表
+        List<String> newHeaders = new ArrayList<>();
+        for (String h : sheet.getHeaders()) {
+            newHeaders.add(actual2expected.getOrDefault(h, h));
+        }
+        sheet.setHeaders(newHeaders);
+        // 改每行 cells 的 key
+        for (ParsedSheet.Row row : sheet.getRows()) {
+            Map<String, String> newCells = new LinkedHashMap<>();
+            for (Map.Entry<String, String> c : row.getCells().entrySet()) {
+                newCells.put(actual2expected.getOrDefault(c.getKey(), c.getKey()), c.getValue());
+            }
+            row.setCells(newCells);
+        }
+    }
+
+    /** 导入自愈:取暂存文件的表头/样本/缺失必填列,供 ImportFixService 猜映射 */
+    public FixContext peekForFix(String token) {
+        PendingUpload pending = pendingUploads.get(token);
+        if (pending == null) {
+            throw new BizException("上传凭据已失效,请重新上传预览");
+        }
+        File tmp = new File(pending.getTmpPath());
+        if (!tmp.exists()) {
+            throw new BizException("暂存文件丢失,请重新上传");
+        }
+        String[][] spec = specOf(pending.getFileType());
+        ParsedSheet sheet = excelParser.parse(new ByteArrayInputStream(FileUtil.readBytes(tmp)));
+        FixContext ctx = new FixContext();
+        ctx.setFileType(pending.getFileType());
+        ctx.setSpec(spec);
+        ctx.setHeaders(new ArrayList<>(sheet.getHeaders()));
+        List<Map<String, String>> samples = new ArrayList<>();
+        for (int i = 0; i < Math.min(3, sheet.getRows().size()); i++) {
+            samples.add(sheet.getRows().get(i).getCells());
+        }
+        ctx.setSampleRows(samples);
+        List<String> missing = new ArrayList<>();
+        for (String[] col : spec) {
+            if (!sheet.getHeaders().contains(col[0])) {
+                missing.add(col[0]);
+            }
+        }
+        ctx.setMissingExpected(missing);
+        return ctx;
+    }
+
+    /** 导入自愈:确认列映射后,把映射存进暂存并重新校验预览(不重传文件) */
+    public PreviewResp applyFix(String token, Map<String, String> columnMap) {
+        PendingUpload pending = pendingUploads.get(token);
+        if (pending == null) {
+            throw new BizException("上传凭据已失效,请重新上传预览");
+        }
+        File tmp = new File(pending.getTmpPath());
+        if (!tmp.exists()) {
+            throw new BizException("暂存文件丢失,请重新上传");
+        }
+        pending.setColumnMap(columnMap);
+        String[][] spec = specOf(pending.getFileType());
+        ParsedSheet sheet = excelParser.parse(new ByteArrayInputStream(FileUtil.readBytes(tmp)));
+        remapHeaders(sheet, columnMap);
+        PreviewResp resp = new PreviewResp();
         resp.setToken(token);
+        resp.setFileName(pending.getFileName());
+        resp.setFileType(pending.getFileType());
+        fillPreview(spec, sheet, resp);
         return resp;
     }
 
@@ -200,6 +309,8 @@ public class ImportService {
             throw new BizException("暂存文件丢失,请重新上传");
         }
         ParsedSheet sheet = excelParser.parse(new ByteArrayInputStream(FileUtil.readBytes(tmp)));
+        // 导入自愈:若确认过列映射,把厂家改了名的表头改回期望名,下游取列逻辑无需改动
+        remapHeaders(sheet, pending.getColumnMap());
 
         // 建批次(先落库拿 id,归档路径带批次号)
         ImportBatch batch = new ImportBatch();

@@ -11,6 +11,7 @@ import {
   type ImportFileType,
   type InitialStatusResp,
   type PreviewResp,
+  type FixSuggestResp,
   type PriceChange,
   type Step1PreviewResp,
   type Step2PreviewResp,
@@ -18,6 +19,7 @@ import {
   type ValidateResp,
 } from '@/api/imports'
 import AliasPendingDrawer from '@/components/basedata/AliasPendingDrawer.vue'
+import LlmTransparencyBadge from '@/components/ai/LlmTransparencyBadge.vue'
 
 /**
  * 导入中心(M1-3):全系统数据入口。对照 mockup p5 导入部分。
@@ -69,6 +71,8 @@ function makeUploader(type: ImportFileType) {
     uploading.value = type
     try {
       preview.value = await importsApi.upload(type, options.file as File)
+      fixResult.value = null // 每次新上传清掉上次的自愈建议
+      fixMap.value = {}
       previewVisible.value = true
     } finally {
       uploading.value = null
@@ -77,6 +81,55 @@ function makeUploader(type: ImportFileType) {
 }
 
 const previewColumns = computed(() => preview.value?.headers ?? [])
+
+// ---------- 导入自愈(接入点#9 IMPORT_FIX)----------
+const fixSuggesting = ref(false)
+const fixApplying = ref(false)
+const fixResult = ref<FixSuggestResp | null>(null)
+// 用户在下拉里确认后的映射:期望列 → 文件实际表头
+const fixMap = ref<Record<string, string>>({})
+
+async function runFixSuggest(force = false) {
+  if (!preview.value) return
+  fixSuggesting.value = true
+  try {
+    const r = await importsApi.fixSuggest(preview.value.token, force)
+    fixResult.value = r
+    // 预填下拉:用 AI/规则的建议值
+    const m: Record<string, string> = {}
+    r.mappings.forEach((mp) => {
+      if (mp.suggested) m[mp.expected] = mp.suggested
+    })
+    fixMap.value = m
+  } finally {
+    fixSuggesting.value = false
+  }
+}
+
+async function applyFix() {
+  if (!preview.value) return
+  // 校验:必填列都得选了才让应用
+  const missingReq = (fixResult.value?.mappings ?? []).filter(
+    (mp) => mp.required && !fixMap.value[mp.expected],
+  )
+  if (missingReq.length) {
+    ElMessage.warning(`还有必填列没对上:${missingReq.map((m) => m.expected).join('、')}`)
+    return
+  }
+  fixApplying.value = true
+  try {
+    const resp = await importsApi.fixApply(preview.value.token, fixMap.value)
+    preview.value = resp
+    if (resp.columnsOk) {
+      ElMessage.success('列映射已应用,现在可以确认导入了')
+      fixResult.value = null
+    } else {
+      ElMessage.warning('还有必填列没对上,请继续调整')
+    }
+  } finally {
+    fixApplying.value = false
+  }
+}
 
 async function confirmImport() {
   if (!preview.value) return
@@ -471,6 +524,49 @@ const statusChip = (s: string) => (s === '已导入' ? 'success' : s === '已回
             {{ c.found ? '✓' : '✗' }} {{ c.expected }}{{ c.required ? '' : '(选填)' }}
           </el-tag>
         </div>
+
+        <!-- 导入自愈(接入点#9):缺必填列时,AI 把文件表头对到系统期望列 -->
+        <div v-if="!preview.columnsOk" class="fix-panel mb-10px">
+          <div class="flex items-center gap-8px flex-wrap mb-6px">
+            <span class="text-13px" style="color: var(--amber, #c97e2c)">
+              🩹 厂家像是改了模板?让 AI 把你表里的列对到系统需要的列,不用改 Excel。
+            </span>
+            <el-button size="small" type="warning" plain :loading="fixSuggesting" @click="runFixSuggest(false)">
+              {{ fixResult ? '重新猜' : 'AI 猜列映射' }}
+            </el-button>
+          </div>
+          <template v-if="fixResult && fixResult.mappings.length">
+            <div class="text-12px text-gray-500 mb-8px flex items-center gap-6px">
+              {{ fixResult.mode }} · 置信 {{ Math.round((fixResult.confidence ?? 0) * 100) }}%
+              <LlmTransparencyBadge v-if="fixResult.llmCallId != null" :call-id="fixResult.llmCallId" size="mini" />
+            </div>
+            <div
+              v-for="mp in fixResult.mappings"
+              :key="mp.expected"
+              class="flex items-center gap-8px mb-6px flex-wrap"
+            >
+              <span class="text-13px" style="width: 130px">
+                {{ mp.expected }}<span v-if="mp.required" style="color: var(--red, #c0392b)">*</span>
+              </span>
+              <span class="text-gray-400">←</span>
+              <el-select
+                v-model="fixMap[mp.expected]"
+                size="small"
+                clearable
+                filterable
+                placeholder="选文件里的表头"
+                style="width: 210px"
+              >
+                <el-option v-for="h in preview.headers" :key="h" :label="h" :value="h" />
+              </el-select>
+              <span class="text-12px text-gray-400">{{ mp.reason }}</span>
+            </div>
+            <el-button size="small" type="primary" :loading="fixApplying" @click="applyFix">
+              按此映射重新校验 →
+            </el-button>
+          </template>
+        </div>
+
         <div style="max-height: 46vh; overflow: auto">
           <el-table :data="preview.previewRows" size="small" border>
             <el-table-column

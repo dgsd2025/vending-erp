@@ -13,6 +13,7 @@ import top.aole.vend.modules.imports.dto.ImportDtos;
 import top.aole.vend.modules.imports.domain.entity.ImportBatch;
 import top.aole.vend.modules.imports.domain.entity.ImportError;
 import top.aole.vend.modules.imports.service.ImportService;
+import top.aole.vend.modules.imports.service.ImportFixService;
 
 import javax.validation.Valid;
 import java.io.IOException;
@@ -28,6 +29,19 @@ import java.util.List;
 public class ImportController {
 
     private final ImportService importService;
+    private final ImportFixService importFixService;
+
+    @ApiOperation("导入自愈:AI 猜列映射(厂家改模板→期望列对到实际表头)")
+    @PostMapping("/fix/suggest")
+    public R<ImportDtos.FixSuggestResp> fixSuggest(@Valid @RequestBody ImportDtos.FixSuggestReq req) {
+        return R.ok(importFixService.suggest(req.getToken(), req.isForce()));
+    }
+
+    @ApiOperation("导入自愈:按确认的列映射重新校验预览(不重传文件)")
+    @PostMapping("/fix/apply")
+    public R<ImportDtos.PreviewResp> fixApply(@Valid @RequestBody ImportDtos.FixApplyReq req) {
+        return R.ok(importService.applyFix(req.getToken(), req.getColumnMap()));
+    }
 
     @ApiOperation("第①步:上传解析预览(前20行+列映射校验,未入账)")
     @PostMapping("/upload")
