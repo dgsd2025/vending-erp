@@ -187,11 +187,11 @@ onMounted(load)
           </el-radio-group>
         </el-form-item>
         <el-form-item v-if="form.settleMethod === '月结'" label="账期(天)">
-          <el-input-number v-model="form.accountDays as number" :min="0" :precision="0" />
+          <el-input-number v-model="form.accountDays" :min="0" :precision="0" />
           <span class="mini" style="margin-left: 8px">逾期未付首页亮黄灯</span>
         </el-form-item>
         <el-form-item label="期初应付 ¥">
-          <el-input-number v-model="form.openingPayable as number" :min="0" :precision="2" :disabled="isEdit" />
+          <el-input-number v-model="form.openingPayable" :min="0" :precision="2" :disabled="isEdit" />
           <span class="mini" style="margin-left: 8px">{{ isEdit ? '上线后改动走调整单留痕(M3)' : '上线向导录入' }}</span>
         </el-form-item>
         <el-form-item label="备注">

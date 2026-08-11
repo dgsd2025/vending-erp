@@ -546,13 +546,13 @@ const trim = (v: number | string | null | undefined) =>
           </el-select>
         </el-form-item>
         <el-form-item label="提前期 L(天)">
-          <el-input-number v-model="cfgForm.leadTimeDays as number" :min="0" :max="30" />
+          <el-input-number v-model="cfgForm.leadTimeDays" :min="0" :max="30" />
         </el-form-item>
         <el-form-item label="慢销 min(箱)">
-          <el-input-number v-model="cfgForm.slowMinBoxes as number" :min="0" :step="0.5" />
+          <el-input-number v-model="cfgForm.slowMinBoxes" :min="0" :step="0.5" />
         </el-form-item>
         <el-form-item label="慢销 max(箱)">
-          <el-input-number v-model="cfgForm.slowMaxBoxes as number" :min="0.5" :step="0.5" />
+          <el-input-number v-model="cfgForm.slowMaxBoxes" :min="0.5" :step="0.5" />
         </el-form-item>
         <el-form-item label="AI 解释模型">
           <el-input v-model="cfgForm.llmModel" placeholder="空 = 跟随系统配置(mock 阶段仅展示)" />

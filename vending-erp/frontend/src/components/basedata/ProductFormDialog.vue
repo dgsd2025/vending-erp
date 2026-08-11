@@ -106,27 +106,27 @@ async function save() {
         </el-col>
         <el-col :span="8">
           <el-form-item label="箱规">
-            <el-input-number v-model="form.boxSpec as number" :min="1" :precision="0" style="width: 100%" />
+            <el-input-number v-model="form.boxSpec" :min="1" :precision="0" style="width: 100%" />
           </el-form-item>
         </el-col>
         <el-col :span="8">
           <el-form-item label="保质期(天)">
-            <el-input-number v-model="form.shelfLifeDays as number" :min="0" :precision="0" style="width: 100%" />
+            <el-input-number v-model="form.shelfLifeDays" :min="0" :precision="0" style="width: 100%" />
           </el-form-item>
         </el-col>
         <el-col :span="8">
           <el-form-item label="参考成本 ¥">
-            <el-input-number v-model="form.refCost as number" :min="0" :precision="2" :step="0.1" style="width: 100%" />
+            <el-input-number v-model="form.refCost" :min="0" :precision="2" :step="0.1" style="width: 100%" />
           </el-form-item>
         </el-col>
         <el-col :span="8">
           <el-form-item label="参考售价 ¥">
-            <el-input-number v-model="form.refPrice as number" :min="0" :precision="2" :step="0.1" style="width: 100%" />
+            <el-input-number v-model="form.refPrice" :min="0" :precision="2" :step="0.1" style="width: 100%" />
           </el-form-item>
         </el-col>
         <el-col :span="8">
           <el-form-item label="机内上限">
-            <el-input-number v-model="form.minDisplayQty as number" :min="0" :precision="0" style="width: 100%" />
+            <el-input-number v-model="form.minDisplayQty" :min="0" :precision="0" style="width: 100%" />
           </el-form-item>
         </el-col>
         <el-col :span="24">

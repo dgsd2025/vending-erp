@@ -246,7 +246,7 @@ onMounted(() => {
           </el-select>
         </el-form-item>
         <el-form-item label="期初余额 ¥">
-          <el-input-number v-model="form.openingBalance as number" :precision="2" style="width: 180px" />
+          <el-input-number v-model="form.openingBalance" :precision="2" style="width: 180px" />
           <span class="mini" style="margin-left: 8px">可留空以后设;<b>只能设一次</b></span>
         </el-form-item>
       </el-form>

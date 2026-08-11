@@ -103,16 +103,16 @@ onMounted(load)
       <h3>🎛 全局补货参数 <span class="hint">(R,S) 模型输入 · 改动留痕可追</span></h3>
       <el-form inline label-width="auto">
         <el-form-item label="补货周期 R(天)">
-          <el-input-number v-model="globalForm.cycleDays as number" :min="1" :precision="0" />
+          <el-input-number v-model="globalForm.cycleDays" :min="1" :precision="0" />
         </el-form-item>
         <el-form-item label="服务水平">
-          <el-input-number v-model="globalForm.serviceLevel as number" :min="0.5" :max="0.99" :step="0.01" :precision="2" />
+          <el-input-number v-model="globalForm.serviceLevel" :min="0.5" :max="0.99" :step="0.01" :precision="2" />
         </el-form-item>
         <el-form-item label="提前期 L(天)">
-          <el-input-number v-model="globalForm.leadTimeDays as number" :min="0" :precision="1" :step="0.5" />
+          <el-input-number v-model="globalForm.leadTimeDays" :min="0" :precision="1" :step="0.5" />
         </el-form-item>
         <el-form-item label="临期预警(天)">
-          <el-input-number v-model="globalForm.expireWarnDays as number" :min="1" :precision="0" />
+          <el-input-number v-model="globalForm.expireWarnDays" :min="1" :precision="0" />
         </el-form-item>
         <el-form-item>
           <el-button type="primary" :loading="saving" @click="saveGlobal">保存全局参数</el-button>
@@ -196,16 +196,16 @@ onMounted(load)
           />
         </el-form-item>
         <el-form-item label="补货周期 R">
-          <el-input-number v-model="ovForm.cycleDays as number" :min="1" :precision="0" />
+          <el-input-number v-model="ovForm.cycleDays" :min="1" :precision="0" />
         </el-form-item>
         <el-form-item label="服务水平">
-          <el-input-number v-model="ovForm.serviceLevel as number" :min="0.5" :max="0.99" :step="0.01" :precision="2" />
+          <el-input-number v-model="ovForm.serviceLevel" :min="0.5" :max="0.99" :step="0.01" :precision="2" />
         </el-form-item>
         <el-form-item label="提前期 L">
-          <el-input-number v-model="ovForm.leadTimeDays as number" :min="0" :precision="1" :step="0.5" />
+          <el-input-number v-model="ovForm.leadTimeDays" :min="0" :precision="1" :step="0.5" />
         </el-form-item>
         <el-form-item label="临期预警(天)">
-          <el-input-number v-model="ovForm.expireWarnDays as number" :min="1" :precision="0" />
+          <el-input-number v-model="ovForm.expireWarnDays" :min="1" :precision="0" />
         </el-form-item>
       </el-form>
       <template #footer>
