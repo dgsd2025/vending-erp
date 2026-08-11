@@ -53,11 +53,22 @@ async function save() {
   }
   saving.value = true
   try {
+    // type=number 的 el-input 给的是字符串,落库前统一转成数字/空
+    const num = (v: unknown): number | null =>
+      v === '' || v === null || v === undefined || Number.isNaN(Number(v)) ? null : Number(v)
+    const payload: Product = {
+      ...form,
+      boxSpec: num(form.boxSpec) ?? 1,
+      shelfLifeDays: num(form.shelfLifeDays),
+      refCost: num(form.refCost),
+      refPrice: num(form.refPrice),
+      minDisplayQty: num(form.minDisplayQty),
+    }
     if (isEdit.value && props.product?.id) {
-      await updateProduct(props.product.id, { ...form })
+      await updateProduct(props.product.id, payload)
       ElMessage.success('已保存(改动已记操作日志;售价变化另记改价留痕)')
     } else {
-      await createProduct({ ...form })
+      await createProduct(payload)
       ElMessage.success('商品已建档')
     }
     emit('update:visible', false)
@@ -106,27 +117,27 @@ async function save() {
         </el-col>
         <el-col :span="8">
           <el-form-item label="箱规">
-            <el-input-number v-model="form.boxSpec" :min="1" :precision="0" style="width: 100%" />
+            <el-input v-model="form.boxSpec" type="number" min="1" step="1" placeholder="1" style="width: 100%" />
           </el-form-item>
         </el-col>
         <el-col :span="8">
           <el-form-item label="保质期(天)">
-            <el-input-number v-model="form.shelfLifeDays" :min="0" :precision="0" style="width: 100%" />
+            <el-input v-model="form.shelfLifeDays" type="number" min="0" step="1" placeholder="天数" style="width: 100%" />
           </el-form-item>
         </el-col>
         <el-col :span="8">
           <el-form-item label="参考成本 ¥">
-            <el-input-number v-model="form.refCost" :min="0" :precision="2" :step="0.1" style="width: 100%" />
+            <el-input v-model="form.refCost" type="number" min="0" step="0.1" placeholder="0.00" style="width: 100%" />
           </el-form-item>
         </el-col>
         <el-col :span="8">
           <el-form-item label="参考售价 ¥">
-            <el-input-number v-model="form.refPrice" :min="0" :precision="2" :step="0.1" style="width: 100%" />
+            <el-input v-model="form.refPrice" type="number" min="0" step="0.1" placeholder="0.00" style="width: 100%" />
           </el-form-item>
         </el-col>
         <el-col :span="8">
           <el-form-item label="机内上限">
-            <el-input-number v-model="form.minDisplayQty" :min="0" :precision="0" style="width: 100%" />
+            <el-input v-model="form.minDisplayQty" type="number" min="0" step="1" placeholder="上限" style="width: 100%" />
           </el-form-item>
         </el-col>
         <el-col :span="24">
