@@ -81,7 +81,7 @@ const spotStyle = computed(() => {
     <div v-if="!rect" class="tour-dim" @click.self="finish" />
     <div v-else class="tour-spot" :style="spotStyle" />
 
-    <div class="tour-bubble" :style="bubbleStyle">
+    <div v-if="curStep" class="tour-bubble" :style="bubbleStyle">
       <div class="tb-title">{{ curStep.title }}</div>
       <div class="tb-desc">{{ curStep.desc }}</div>
       <div class="tb-foot">

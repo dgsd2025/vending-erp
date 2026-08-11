@@ -264,7 +264,7 @@ function goMachine(id: number | null) {
           </div>
         </div>
       </div>
-      <div v-if="quadrant?.noCostPoints.length" class="text-12px text-amber-600 mt-8px">
+      <div v-if="quadrant?.noCostPoints?.length" class="text-12px text-amber-600 mt-8px">
         ⚠️ {{ quadrant.noCostPoints.length }} 个单品有销量但无采购史(毛利率算不出),不入象限,单列「成本待补」
       </div>
     </el-card>
