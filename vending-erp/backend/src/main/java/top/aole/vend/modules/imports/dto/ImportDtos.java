@@ -99,6 +99,33 @@ public final class ImportDtos {
         private Map<String, String> columnMap;
     }
 
+    /** 一条失败行(供"修改失败行→重导") */
+    @Data
+    public static class FailedRow {
+        private Long errorId;
+        private Integer rowNo;
+        /** 原始行:列名→值(可编辑) */
+        private Map<String, String> cells = new java.util.LinkedHashMap<>();
+        private String errorType;
+        private String errorMsg;
+    }
+
+    /** 某批次的失败行清单 + 该通道的列规格(前端据此建可编辑表格) */
+    @Data
+    public static class FailedRowsResp {
+        private String fileType;
+        /** 每列:[列名, "1"必填/"0"选填] */
+        private List<String[]> columnSpec = new ArrayList<>();
+        private List<FailedRow> rows = new ArrayList<>();
+    }
+
+    /** 请求:把修改后的失败行重新导入(建修正批次) */
+    @Data
+    public static class RefixReq {
+        @NotEmpty
+        private List<Map<String, String>> rows;
+    }
+
     /** 第②步确认入参 */
     @Data
     public static class ConfirmReq {

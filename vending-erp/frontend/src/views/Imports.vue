@@ -201,6 +201,48 @@ async function openErrors(row: ImportBatch) {
   errorsVisible.value = true
 }
 
+// ---------- 修改失败行 → 重导 ----------
+const fixRowsVisible = ref(false)
+const fixRowsBatch = ref<ImportBatch | null>(null)
+const fixColumns = ref<[string, string][]>([]) // [列名, "1"必填/"0"选填]
+const fixRowsData = ref<Record<string, string>[]>([]) // 可编辑单元格
+const fixErrors = ref<string[]>([]) // 每行原始错误原因
+const fixLoading = ref(false)
+const fixSubmitting = ref(false)
+
+async function openFixRows(row: ImportBatch) {
+  fixRowsBatch.value = row
+  fixLoading.value = true
+  try {
+    const resp = await importsApi.failedRows(row.id)
+    fixColumns.value = resp.columnSpec
+    fixRowsData.value = resp.rows.map((r) => ({ ...r.cells }))
+    fixErrors.value = resp.rows.map((r) => r.errorMsg)
+    fixRowsVisible.value = true
+  } finally {
+    fixLoading.value = false
+  }
+}
+
+async function submitFixRows() {
+  if (!fixRowsBatch.value || !fixRowsData.value.length) return
+  fixSubmitting.value = true
+  try {
+    const resp = await importsApi.refix(fixRowsBatch.value.id, fixRowsData.value)
+    if (resp.rowFail > 0) {
+      ElMessage.warning(
+        `修正重导:成功 ${resp.rowOk} · 仍失败 ${resp.rowFail}——失败的可在新批次「${resp.batchNo}」继续「修改重导」`,
+      )
+    } else {
+      ElMessage.success(`修正重导全部成功:${resp.rowOk} 行已入账(新批次 ${resp.batchNo})`)
+    }
+    fixRowsVisible.value = false
+    await loadBatches()
+  } finally {
+    fixSubmitting.value = false
+  }
+}
+
 // ---------- 改价待确认 ----------
 
 const priceVisible = ref(false)
@@ -467,6 +509,15 @@ const statusChip = (s: string) => (s === '已导入' ? 'success' : s === '已回
         <el-table-column label="操作" width="300">
           <template #default="{ row }">
             <el-button link type="primary" size="small" @click="openErrors(row)">错误明细</el-button>
+            <el-button
+              v-if="row.rowFail > 0"
+              link
+              type="warning"
+              size="small"
+              @click="openFixRows(row)"
+            >
+              修改重导
+            </el-button>
             <el-button link type="warning" size="small" @click="openPriceDialog(row.id)">改价清单</el-button>
             <el-button
               v-if="row.fileType === '出货明细' && row.batchStatus === '已导入'"
@@ -599,6 +650,51 @@ const statusChip = (s: string) => (s === '已导入' ? 'success' : s === '已回
           <el-empty description="本批没有失败行 ✓" :image-size="60" />
         </template>
       </el-table>
+    </el-dialog>
+
+    <!-- 修改失败行 → 重导 -->
+    <el-dialog
+      v-model="fixRowsVisible"
+      :title="`修改失败行重导 · ${fixRowsBatch?.batchNo ?? ''}`"
+      width="90%"
+      top="4vh"
+    >
+      <el-alert type="info" :closable="false" class="mb-10px">
+        改正下面这些行(如把设备ID「仓库」改成真实机器名),点「保存并重导」——系统会建一个修正批次重新入账;
+        仍失败的行可再次修改重导。<b>带 * 的是必填列。</b>
+      </el-alert>
+      <div style="max-height: 60vh; overflow: auto">
+        <el-table :data="fixRowsData" size="small" border v-loading="fixLoading">
+          <el-table-column label="#" type="index" width="48" />
+          <el-table-column
+            v-for="col in fixColumns"
+            :key="col[0]"
+            min-width="130"
+          >
+            <template #header>
+              {{ col[0] }}<span v-if="col[1] === '1'" style="color: var(--red, #c0392b)">*</span>
+            </template>
+            <template #default="{ row }">
+              <el-input v-model="row[col[0]]" size="small" />
+            </template>
+          </el-table-column>
+          <el-table-column label="原失败原因" min-width="180">
+            <template #default="{ $index }">
+              <span class="text-12px" style="color: var(--amber, #c97e2c)">{{ fixErrors[$index] }}</span>
+            </template>
+          </el-table-column>
+          <template #empty>
+            <el-empty description="没有失败行" :image-size="60" />
+          </template>
+        </el-table>
+      </div>
+      <template #footer>
+        <span class="text-12px text-gray-400" style="margin-right: auto">
+          共 {{ fixRowsData.length }} 行待修正重导
+        </span>
+        <el-button @click="fixRowsVisible = false">取消</el-button>
+        <el-button type="primary" :loading="fixSubmitting" @click="submitFixRows">保存并重导 →</el-button>
+      </template>
     </el-dialog>
 
     <!-- 改价待确认清单(P2-9:确认后更新档案+写 price_log) -->

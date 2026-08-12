@@ -30,6 +30,7 @@ import top.aole.vend.modules.doc.dto.DocCreateReq;
 import top.aole.vend.modules.doc.dto.DocItemReq;
 import top.aole.vend.modules.doc.mapper.DocHeadMapper;
 import top.aole.vend.modules.doc.service.DocService;
+import top.aole.vend.modules.imports.dto.ImportDtos;
 import top.aole.vend.modules.imports.dto.ImportDtos.ColumnCheck;
 import top.aole.vend.modules.imports.dto.ImportDtos.CommitResp;
 import top.aole.vend.modules.imports.dto.ImportDtos.NegativeStock;
@@ -288,6 +289,116 @@ public class ImportService {
         resp.setFileName(pending.getFileName());
         resp.setFileType(pending.getFileType());
         fillPreview(spec, sheet, resp);
+        return resp;
+    }
+
+    // ============================== 修改失败行 → 重导 ==============================
+
+    /** 取某批次的失败行(带原始行数据,供前端编辑)+ 该通道列规格 */
+    public ImportDtos.FailedRowsResp failedRows(Long batchId) {
+        ImportBatch batch = batchMapper.selectById(batchId);
+        if (batch == null) {
+            throw new BizException("批次不存在");
+        }
+        ImportDtos.FailedRowsResp resp = new ImportDtos.FailedRowsResp();
+        resp.setFileType(batch.getFileType());
+        for (String[] col : specOf(batch.getFileType())) {
+            resp.getColumnSpec().add(new String[]{col[0], col[1]});
+        }
+        List<ImportError> errs = errorMapper.selectList(new LambdaQueryWrapper<ImportError>()
+                .eq(ImportError::getBatchId, batchId)
+                .orderByAsc(ImportError::getRowNo));
+        for (ImportError e : errs) {
+            ImportDtos.FailedRow fr = new ImportDtos.FailedRow();
+            fr.setErrorId(e.getId());
+            fr.setRowNo(e.getRowNo());
+            fr.setErrorType(e.getErrorType());
+            fr.setErrorMsg(e.getErrorMsg());
+            if (StrUtil.isNotBlank(e.getRawContent())) {
+                cn.hutool.json.JSONObject obj = JSONUtil.parseObj(e.getRawContent());
+                for (String k : obj.keySet()) {
+                    fr.getCells().put(k, obj.getStr(k));
+                }
+            }
+            resp.getRows().add(fr);
+        }
+        return resp;
+    }
+
+    /** 把修改后的失败行建一个"修正批次"重新导入(走原通道处理管线) */
+    @Transactional(rollbackFor = Exception.class)
+    public CommitResp refix(Long batchId, List<Map<String, String>> rows, String operator) {
+        ImportBatch orig = batchMapper.selectById(batchId);
+        if (orig == null) {
+            throw new BizException("原批次不存在");
+        }
+        if (rows == null || rows.isEmpty()) {
+            throw new BizException("没有要重导的行");
+        }
+        String fileType = orig.getFileType();
+        String[][] spec = specOf(fileType);
+
+        // 用编辑后的行拼一张 ParsedSheet(表头 = 通道期望列 ∪ 行里出现的列)
+        ParsedSheet sheet = new ParsedSheet();
+        List<String> headers = new ArrayList<>();
+        for (String[] col : spec) {
+            if (!headers.contains(col[0])) headers.add(col[0]);
+        }
+        for (Map<String, String> r : rows) {
+            for (String k : r.keySet()) {
+                if (!headers.contains(k)) headers.add(k);
+            }
+        }
+        sheet.getHeaders().addAll(headers);
+        int rn = 1;
+        for (Map<String, String> r : rows) {
+            ParsedSheet.Row row = new ParsedSheet.Row();
+            row.setRowNo(rn++);
+            if (r != null) {
+                row.getCells().putAll(r);
+            }
+            sheet.getRows().add(row);
+        }
+
+        // 建修正批次
+        ImportBatch batch = new ImportBatch();
+        batch.setBatchNo("REFIX-" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss"))
+                + "-" + IdUtil.fastSimpleUUID().substring(0, 4).toUpperCase());
+        batch.setFileName(orig.getBatchNo() + "(修正重导)");
+        batch.setFileType(fileType);
+        batch.setRowTotal(rows.size());
+        batch.setBatchStatus(ImportBatch.STATUS_PROCESSING);
+        batch.setCreateUser(IMPORT_USER);
+        batchMapper.insert(batch);
+
+        CommitResp resp = new CommitResp();
+        resp.setBatchId(batch.getId());
+        resp.setBatchNo(batch.getBatchNo());
+        resp.setFileType(fileType);
+        resp.setRowTotal(rows.size());
+        switch (fileType) {
+            case ImportBatch.TYPE_SALE:
+                processSale(batch, sheet, resp);
+                break;
+            case ImportBatch.TYPE_REPLENISH:
+                processReplenish(batch, sheet, resp);
+                break;
+            case ImportBatch.TYPE_PRODUCT_LIST:
+                processProductList(batch, sheet, resp, operator);
+                break;
+            default:
+                throw new BizException("不支持的导入类型:" + fileType);
+        }
+        batch.setRowOk(resp.getRowOk());
+        batch.setRowFail(resp.getRowFail());
+        batch.setRowDup(resp.getRowDup());
+        batch.setBatchStatus(ImportBatch.STATUS_IMPORTED);
+        batch.setUpdateUser(IMPORT_USER);
+        batchMapper.updateById(batch);
+        opLogService.record(operator, "修改失败行重导", "import_batch", batch.getId(), null,
+                "源批次 " + orig.getBatchNo() + " 修正重导 " + rows.size() + " 行 → 成 "
+                        + resp.getRowOk() + " 败 " + resp.getRowFail());
+        resp.setPriceChangeCount(listPriceChanges(batch.getId()).size());
         return resp;
     }
 

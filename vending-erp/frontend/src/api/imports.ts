@@ -42,6 +42,23 @@ export interface FixSuggestResp {
   mode: string
 }
 
+/** 失败行(供修改重导) */
+export interface FailedRow {
+  errorId: number
+  rowNo: number
+  cells: Record<string, string>
+  errorType: string
+  errorMsg: string
+}
+
+/** 某批次失败行清单 + 通道列规格 */
+export interface FailedRowsResp {
+  fileType: ImportFileType
+  /** 每列 [列名, "1"必填/"0"选填] */
+  columnSpec: [string, string][]
+  rows: FailedRow[]
+}
+
 export interface NegativeStock {
   productId: number
   skuCode: string
@@ -233,6 +250,14 @@ export const importsApi = {
   /** 导入自愈:按确认的映射重新校验预览 */
   fixApply(token: string, columnMap: Record<string, string>): Promise<PreviewResp> {
     return request.post('/v1/imports/fix/apply', { token, columnMap })
+  },
+  /** 取批次失败行(带原始数据,供修改) */
+  failedRows(batchId: number): Promise<FailedRowsResp> {
+    return request.get(`/v1/imports/batches/${batchId}/failed-rows`)
+  },
+  /** 修改失败行后重新导入(建修正批次) */
+  refix(batchId: number, rows: Record<string, string>[]): Promise<CommitResp> {
+    return request.post(`/v1/imports/batches/${batchId}/refix`, { rows }, { headers: operatorHeader(), timeout: 120000 })
   },
   batches(current = 1, size = 20, fileType?: string): Promise<PageResult<ImportBatch>> {
     return request.get('/v1/imports/batches', { params: { current, size, fileType } })

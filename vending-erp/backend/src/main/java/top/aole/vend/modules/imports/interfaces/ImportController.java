@@ -43,6 +43,20 @@ public class ImportController {
         return R.ok(importService.applyFix(req.getToken(), req.getColumnMap()));
     }
 
+    @ApiOperation("取批次失败行(带原始数据,供修改)")
+    @GetMapping("/batches/{id}/failed-rows")
+    public R<ImportDtos.FailedRowsResp> failedRows(@PathVariable Long id) {
+        return R.ok(importService.failedRows(id));
+    }
+
+    @ApiOperation("修改失败行后重新导入(建修正批次)")
+    @PostMapping("/batches/{id}/refix")
+    public R<ImportDtos.CommitResp> refix(@PathVariable Long id,
+                                          @Valid @RequestBody ImportDtos.RefixReq req,
+                                          @RequestHeader(value = Operators.HEADER, required = false) String userName) {
+        return R.ok(importService.refix(id, req.getRows(), Operators.resolve(userName)));
+    }
+
     @ApiOperation("第①步:上传解析预览(前20行+列映射校验,未入账)")
     @PostMapping("/upload")
     public R<ImportDtos.PreviewResp> upload(@RequestParam("fileType") String fileType,
