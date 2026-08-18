@@ -10,3 +10,7 @@ __pycache__/
 .idea/
 .vscode/
 vending-erp/storage/
+
+# 前端构建缓存/本地项目包
+vending-erp/frontend/.vite/
+*.zip

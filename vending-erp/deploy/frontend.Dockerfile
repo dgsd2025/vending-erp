@@ -2,6 +2,8 @@
 # Node 22:对齐本地环境(pnpm@11 需 Node≥22.13,用到 node:sqlite;Node20 会 ERR_UNKNOWN_BUILTIN_MODULE)
 FROM node:22-alpine AS build
 WORKDIR /build
+# CI 模式:pnpm 无终端时不弹交互确认(NO_TTY abort 防复发)
+ENV CI=true
 # 先设国内镜像源,再装 pnpm(国内 ECS 直连 npmjs 会超时)
 # pnpm 版本对齐本地 11.x:pnpm-workspace.yaml 用的 allowBuilds 是 pnpm10+ 字段
 RUN npm config set registry https://registry.npmmirror.com && npm i -g pnpm@11

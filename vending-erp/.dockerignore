@@ -1,0 +1,6 @@
+# 构建上下文瘦身:宿主的依赖/产物不进镜像(镜像内自己 install/build)
+**/node_modules
+**/dist
+**/target
+storage
+.git
