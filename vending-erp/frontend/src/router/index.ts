@@ -1,9 +1,11 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { isLoggedIn } from '@/utils/session'
 
 const router = createRouter({
   history: createWebHistory(),
   routes: [
     { path: '/', redirect: '/dashboard' },
+    { path: '/login', name: 'login', meta: { title: '登录 / 注册', public: true }, component: () => import('@/views/Login.vue') },
     { path: '/dashboard', name: 'dashboard', meta: { title: '工作台' }, component: () => import('@/views/Dashboard.vue') },
     { path: '/import', name: 'import', meta: { title: '导入中心' }, component: () => import('@/views/Imports.vue') },
     { path: '/outbound', name: 'outbound', meta: { title: '出库上架' }, component: () => import('@/views/Outbound.vue') },
@@ -26,6 +28,13 @@ const router = createRouter({
     { path: '/monthly-report', name: 'monthly-report', meta: { title: '月度报表' }, component: () => import('@/views/MonthlyReport.vue') },
     { path: '/guide', name: 'guide', meta: { title: '新手指引' }, component: () => import('@/views/Guide.vue') },
   ],
+})
+
+// 2026-08-19 邀请码注册上线:未登录一律去 /login
+router.beforeEach((to) => {
+  if (!to.meta.public && !isLoggedIn()) return { path: '/login', query: { redirect: to.fullPath } }
+  if (to.path === '/login' && isLoggedIn()) return '/dashboard'
+  return true
 })
 
 router.afterEach((to) => {

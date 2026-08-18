@@ -1,5 +1,6 @@
 import axios from 'axios'
 import { ElMessage } from 'element-plus'
+import { clearSession } from '@/utils/session'
 
 /**
  * 统一 axios 实例:
@@ -32,7 +33,13 @@ request.interceptors.response.use(
     return Promise.reject(new Error(message))
   },
   (error) => {
-    ElMessage.error(error?.message || '网络异常')
+    // 2026-08-19 邀请码注册上线:401 → 回登录页
+    if (error?.response?.status === 401) {
+      clearSession()
+      if (!location.pathname.startsWith('/login')) location.href = `/login?redirect=${encodeURIComponent(location.pathname)}`
+      return Promise.reject(error)
+    }
+    ElMessage.error(error?.response?.data?.message || error?.message || '网络异常')
     return Promise.reject(error)
   },
 )

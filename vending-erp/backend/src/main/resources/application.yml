@@ -61,3 +61,13 @@ llm:
 logging:
   level:
     top.aole.vend: debug
+
+
+# 账号体系（2026-08-19 邀请码注册 · 全系统统一契约）
+vend:
+  auth:
+    invite-code: ${REGISTER_INVITE_CODE:dgsd1985}
+    register-default-role: ${REGISTER_DEFAULT_ROLE:店员}   # 首个注册账号自动为「老板」
+    secret: ${VEND_AUTH_SECRET:vend-dev-secret-change-me}     # 生产必须配 VEND_AUTH_SECRET
+    token-ttl-seconds: 2592000
+    placeholder-headers-enabled: ${VEND_PLACEHOLDER_HEADERS:false}

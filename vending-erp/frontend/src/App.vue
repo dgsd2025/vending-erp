@@ -5,6 +5,11 @@ import DataFreshnessBar from '@/components/DataFreshnessBar.vue'
 import TourOverlay from '@/components/TourOverlay.vue'
 import { useTour } from '@/composables/useTour'
 import { isOffline, pendingTasks, replayQueue, replaying } from '@/utils/offline-queue'
+import { clearSession } from '@/utils/session'
+// 2026-08-19 邀请码注册上线:身份来自登录会话
+const sessionName = localStorage.getItem('vend_user_name') || ''
+const sessionRole = localStorage.getItem('vend_user_role') || ''
+function logout() { clearSession(); window.location.href = '/login' }
 
 /**
  * 应用骨架(对照 mockup V15 sidebar):深绿账房侧栏 + 米纸色主区。
@@ -77,7 +82,8 @@ const openGuide = () => router.push('/guide')
 </script>
 
 <template>
-  <div class="app-shell">
+  <router-view v-if="route.meta.public" />
+  <div v-else class="app-shell">
     <!-- 手机顶栏(≤768px 才显示):汉堡 + 标题 -->
     <header class="m-topbar">
       <button class="burger" aria-label="菜单" @click="menuOpen = !menuOpen">☰</button>
@@ -88,6 +94,7 @@ const openGuide = () => router.push('/guide')
       <div class="logo">
         <h1>园区小卖 · 账房</h1>
         <p>VENDING ERP · M1</p>
+        <p class="who">{{ sessionName }}（{{ sessionRole }}） · <a href="#" @click.prevent="logout">退出</a></p>
       </div>
       <nav class="nav">
         <template v-for="(g, gi) in groups" :key="gi">
@@ -380,4 +387,6 @@ body {
     border-radius: 8px;
   }
 }
+.who { font-size: 12px; opacity: .8; margin-top: 6px; }
+.who a { color: inherit; text-decoration: underline; }
 </style>
