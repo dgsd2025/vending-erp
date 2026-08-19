@@ -11,6 +11,8 @@
         </template>
         <el-button type="primary" class="login-btn" :loading="loading" @click="submit">{{ mode === 'login' ? '登 录' : '注 册' }}</el-button>
       </el-form>
+      <div class="sso-divider"><span>或</span></div>
+      <el-button class="login-btn sso-btn" plain @click="goPortalLogin">用平台账号登录（生态管理平台）</el-button>
       <div class="hint">
         <a v-if="mode === 'login'" href="#" @click.prevent="switchMode('register')">没有账号？凭邀请码注册</a>
         <a v-else href="#" @click.prevent="switchMode('login')">已有账号？去登录</a>
@@ -39,6 +41,9 @@ const rules = {
   inviteCode: [{ required: true, message: '请输入邀请码', trigger: 'blur' }],
 }
 function switchMode(m: 'login' | 'register') { mode.value = m; formRef.value?.clearValidate() }
+// 平台门户 SSO：本系统挂在「生态管理平台」eco.vvaix.com，去平台登录后在工作台点本系统卡片即免登落地（/sso/callback）
+const PORTAL_URL = 'https://eco.vvaix.com'
+function goPortalLogin() { window.location.href = PORTAL_URL }
 async function submit() {
   await formRef.value.validate()
   loading.value = true
@@ -63,6 +68,9 @@ async function submit() {
 .brand-row h1 { margin: 0; font-size: 18px; color: #0f172a; }
 .brand-row p { margin: 2px 0 0; font-size: 12px; color: #909399; }
 .login-btn { width: 100%; height: 42px; margin-top: 4px; }
+.sso-divider { display: flex; align-items: center; gap: 10px; margin: 14px 0 10px; color: #c0c4cc; font-size: 12px; }
+.sso-divider::before, .sso-divider::after { content: ''; flex: 1; height: 1px; background: #ebeef5; }
+.sso-btn { margin-top: 0; }
 .hint { margin-top: 16px; text-align: center; font-size: 12px; }
 .hint a { color: #409eff; text-decoration: none; }
 </style>

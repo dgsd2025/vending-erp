@@ -44,8 +44,16 @@ services:
       # 附件/导入落盘目录(挂到宿主卷持久化)
       VEND_ATTACH_STORAGE_DIR: /app/storage/attachments
       VEND_IMPORT_STORAGE_DIR: /app/storage/imports
-      # LLM 留空=全 mock,不外呼;SSO 暂关。均由 .env 覆盖(若填了真值)
+      # LLM 留空=全 mock,不外呼。均由 .env 覆盖(若填了真值)
+      # 平台门户 SSO(eco.vvaix.com 免登直达):真值只在 .env;SSO_ENABLED=false 时模块不挂载
       SSO_ENABLED: ${SSO_ENABLED:-false}
+      SSO_PORTAL_BASE_URL: ${SSO_PORTAL_BASE_URL:-http://host.docker.internal:18151/api}
+      SSO_APP_ID: ${SSO_APP_ID:-}
+      SSO_CLIENT_SECRET: ${SSO_CLIENT_SECRET:-}
+      SSO_PORTAL_JWT_ISSUER: ${SSO_PORTAL_JWT_ISSUER:-aole-portal,yunshan-portal}
+    # 容器内访问宿主上的门户(18151);macOS Docker Desktop 自带该别名,Linux 宿主靠这行
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./storage:/app/storage
     expose:

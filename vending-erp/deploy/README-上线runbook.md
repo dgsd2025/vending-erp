@@ -60,6 +60,13 @@ docker exec central-caddy caddy reload --config /etc/caddy/Caddyfile   # 或平�
 - 备案后:`https://vend.aoleplat.com` 走 V0-V5 真测(健康/登录壳/关键页/SQL 对账)
 - SQL 验证:`vend_prod` 40 表齐、flyway 1.0.17 success
 
+### 第 4.5 步 · 接平台门户 SSO(2026-08-19 · eco.vvaix.com 免登直达,可选)
+1. 门户管理后台注册子系统:名称「智慧园区售卖机 ERP」、系统 URL `https://vend.vvaix.com`、**回调地址 `https://vend.vvaix.com/api/v1/sso/callback`**、ssoEnabled=1 → 拿到 `app_id` / `client_secret`(记密码管理器,不入仓不进对话)
+2. `.env` 填:`SSO_ENABLED=true`、`SSO_PORTAL_BASE_URL=http://host.docker.internal:18151/api`(容器内访问宿主门户)、`SSO_APP_ID`、`SSO_CLIENT_SECRET`、`SSO_PORTAL_JWT_ISSUER=aole-portal,yunshan-portal`;`docker compose ... up -d` 重建 vend-server
+3. Flyway 首启自动补 `V1.0.100`(`yc_vend_auth_user.portal_uid` + 唯一索引,幂等可重跑)
+4. 验收 **路径 A**:开 `https://vend.vvaix.com/login` → 点「用平台账号登录」→ 跳 eco.vvaix.com;**路径 B**:门户工作台点本系统卡片 → `/api/v1/sso/callback?auth_code=..` → 302 `/sso/callback#token=..` → 自动落 `/dashboard`,右上角显示门户姓名;网络面板 `/api/auth/me` 200 无 401
+5. 首登口径:按 `portal_uid` 找账号,找不到自动建号(用户名=手机号/`portal_<uid>`,姓名=门户姓名,角色=`REGISTER_DEFAULT_ROLE` 最低角色;仅当账号表为空才给「老板」)。要提权到老板/财务:目前没有改角色的界面,由负责人在库里改 `yc_vend_auth_user.role`(改完重新登录生效)
+
 ### 第 5 步 · 期初数据(🙋 决策 + 🤖 执行)
 生产库是空的。上线要不要把老 Excel 历史数据用「期初导入向导」灌进去?还是从当天空账起步?——这是业务决策。
 
