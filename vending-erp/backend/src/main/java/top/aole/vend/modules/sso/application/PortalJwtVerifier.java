@@ -45,7 +45,7 @@ public class PortalJwtVerifier {
      * 纯函数版（单测直接调）：
      * 1) header.alg 必须是 RS256（防 alg=none / HS256 混淆）
      * 2) 用门户公钥验签
-     * 3) exp / nbf / iat 时间校验（允许 clockSkew 秒偏差）
+     * 3) exp 必须存在 + exp / nbf / iat 时间校验（允许 clockSkew 秒偏差）
      * 4) aud 必须包含 appId
      * 5) iss 必须在允许列表内
      */
@@ -69,6 +69,8 @@ public class PortalJwtVerifier {
         }
         if (!sigOk) throw new BizException(401, "门户 JWT 签名校验失败");
 
+        // exp 必须存在（hutool validateDate 对缺 exp 的票会放行，显式拒绝）
+        if (jwt.getPayload("exp") == null) throw new BizException(401, "门户 JWT 缺 exp");
         try {
             JWTValidator.of(jwt).validateDate(new Date(), clockSkewSeconds);
         } catch (ValidateException e) {

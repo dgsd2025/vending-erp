@@ -115,6 +115,16 @@ class PortalJwtVerifierTest {
     }
 
     @Test
+    void missingExp_rejected() {
+        // hutool validateDate 对缺 exp 的票会放行，验签器必须显式拒
+        Map<String, Object> p = basePayload();
+        p.remove("exp");
+        BizException e = assertThrows(BizException.class, () -> verify(sign(p, portalKey)));
+        assertEquals(401, e.getCode());
+        assertTrue(e.getMessage().contains("exp"));
+    }
+
+    @Test
     void signedByOtherKey_rejected() {
         BizException e = assertThrows(BizException.class, () -> verify(sign(basePayload(), otherKey)));
         assertTrue(e.getMessage().contains("签名"));

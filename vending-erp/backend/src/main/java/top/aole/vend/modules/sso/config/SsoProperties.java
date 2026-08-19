@@ -32,6 +32,11 @@ public class SsoProperties {
     private String clientSecret = "";
     /** JWT issuer 允许列表（逗号分隔，灰度切换期同时认两个名字） */
     private String jwtIssuer = "aole-portal,yunshan-portal";
+    /**
+     * 允许登录本系统的门户租户 ID 白名单（逗号多值）。**缺省空 = 拒绝所有租户**（跨系统统一口径，2026-08-19）。
+     * 生态管理平台租户 = T000004。
+     */
+    private String allowedTenantIds = "";
     /** 前端 SSO 中转页路径：后端换到本系统 token 后 302 到这里（hash 传 token） */
     private String frontendCallbackPath = "/sso/callback";
     /** 门户公钥内存缓存 TTL（秒），默认 10 分钟 */
@@ -43,6 +48,14 @@ public class SsoProperties {
 
     public List<String> acceptedIssuers() {
         return Arrays.stream(jwtIssuer == null ? new String[0] : jwtIssuer.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+    }
+
+    /** 允许的租户 ID 列表（空列表 = 拒绝所有） */
+    public List<String> allowedTenants() {
+        return Arrays.stream(allowedTenantIds == null ? new String[0] : allowedTenantIds.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
                 .collect(Collectors.toList());

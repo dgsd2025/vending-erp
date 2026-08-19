@@ -51,6 +51,7 @@ services:
       SSO_APP_ID: ${SSO_APP_ID:-}
       SSO_CLIENT_SECRET: ${SSO_CLIENT_SECRET:-}
       SSO_PORTAL_JWT_ISSUER: ${SSO_PORTAL_JWT_ISSUER:-aole-portal,yunshan-portal}
+      SSO_ALLOWED_TENANT_IDS: ${SSO_ALLOWED_TENANT_IDS:-}   # 空=拒绝所有租户
     # 容器内访问宿主上的门户(18151);macOS Docker Desktop 自带该别名,Linux 宿主靠这行
     extra_hosts:
       - "host.docker.internal:host-gateway"

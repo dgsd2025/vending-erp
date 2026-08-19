@@ -18,18 +18,19 @@ import top.aole.vend.modules.sso.infrastructure.PortalSsoClient;
 import java.security.SecureRandom;
 import java.time.LocalDateTime;
 import java.util.Base64;
+import java.util.List;
 import java.util.Objects;
 
 /**
  * 门户 SSO 登录主流程（场景 2：老子系统 + 本地用户表，加 portal_uid 绑定）：
  * <pre>
- *   auth_code → 门户 exchange → RS256 验签（aud/iss/exp）→ URL tenantId 与 JWT tenant_id 双源校验
+ *   auth_code → 门户 exchange → RS256 验签（aud/iss/exp）→ URL tenantId 与 JWT tenant_id 双源校验 → tenant ∈ SSO_ALLOWED_TENANT_IDS（空=全拒）
  *   → 按 portal_uid 找本地 auth_user → 找不到：首登自动建号（最低默认角色）→ 签本系统 Bearer token
  * </pre>
  * 首登口径（本系统拍板，偏离 ole-portal-sso 硬约束 6 的"默认拒绝建号"，因本系统走邀请码自助注册、门户已是可信来源）：
  * <ul>
  *   <li>先按 portal_uid 精确匹配；</li>
- *   <li>再按 username=手机号 匹配"尚未绑定 portal_uid"的老账号 → 回写 portal_uid 绑定（手机号仅用于首次绑定，硬约束 8）；</li>
+ *   <li>再按 username=手机号 匹配"尚未绑定 portal_uid 且角色==默认最低角色"的老账号 → 回写 portal_uid 绑定（手机号仅用于首次绑定，硬约束 8；老板等高权限账号不自动绑）；</li>
  *   <li>都没有 → 新建：username=手机号（被占则 portal_&lt;uid&gt;），姓名=JWT name，角色=register-default-role；</li>
  *   <li>「首个账号自动老板」只在 auth_user 表确实为空时触发，SSO 建号不会把普通门户用户抬成老板。</li>
  * </ul>
@@ -84,6 +85,14 @@ public class SsoLoginService {
             throw new BizException(401, "租户校验失败");
         }
 
+        // 3b. 租户白名单 SSO_ALLOWED_TENANT_IDS（跨系统统一口径 2026-08-19）：缺省空 = 拒绝所有；JWT 无 tenant_id 也拒
+        List<String> allowedTenants = props.allowedTenants();
+        String jwtTenant = blankToNull(claims.getTenantId());
+        if (jwtTenant == null || !allowedTenants.contains(jwtTenant)) {
+            log.warn("[sso] tenant not allowed jwt={} allowed={}", jwtTenant, allowedTenants);
+            throw new BizException(403, "该租户未开通本系统");
+        }
+
         // exchange 顶层 name/phone 与 JWT claims 取并集（JWT 优先）
         String name = firstNonBlank(claims.getName(), data.getStr("name"));
         String phone = firstNonBlank(claims.getPhone(), data.getStr("phone"));
@@ -96,10 +105,13 @@ public class SsoLoginService {
         if (user == null && phone != null) {
             AuthUser byPhone = userMapper.selectOne(new LambdaQueryWrapper<AuthUser>()
                     .eq(AuthUser::getUsername, phone).last("limit 1"));
-            if (byPhone != null && blankToNull(byPhone.getPortalUid()) == null) {
+            // 只自动绑「未绑定 + 角色==默认最低角色」的老账号；老板/财务等高权限账号一律不自动绑（走建号，防越权接管）
+            if (byPhone != null && blankToNull(byPhone.getPortalUid()) == null && Objects.equals(byPhone.getRole(), defaultRole)) {
                 byPhone.setPortalUid(portalUid);
                 user = byPhone;
                 log.info("[sso] bind existing user id={} username={} → portal_uid={}", user.getId(), user.getUsername(), portalUid);
+            } else if (byPhone != null) {
+                log.info("[sso] skip auto-bind username={} role={} portal_uid_bound={} → create new", byPhone.getUsername(), byPhone.getRole(), byPhone.getPortalUid() != null);
             }
         }
         if (user == null) {

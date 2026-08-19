@@ -56,6 +56,8 @@ sso:
   app-id: ${SSO_APP_ID:}
   client-secret: ${SSO_CLIENT_SECRET:}
   jwt-issuer: ${SSO_PORTAL_JWT_ISSUER:aole-portal,yunshan-portal}
+  # 租户白名单(逗号多值),缺省空=拒绝所有;生态管理平台租户 = T000004
+  allowed-tenant-ids: ${SSO_ALLOWED_TENANT_IDS:}
   frontend-callback-path: ${SSO_FRONTEND_CALLBACK_PATH:/sso/callback}
 
 # LLM 网关(OpenAI 兼容,ENV 注入;开发期全 mock 不发真请求)

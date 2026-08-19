@@ -23,7 +23,7 @@ import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.*;
 
 /**
- * SSO 登录主流程单测（Mockito，不起 Spring、不连库）：开关 / app_id / tenant 双源校验 / 首登建号口径。
+ * SSO 登录主流程单测（Mockito，不起 Spring、不连库）：开关 / app_id / tenant 双源校验 / 租户白名单 / 首登建号口径 / 手机号自动绑定只限最低角色。
  */
 class SsoLoginServiceTest {
 
@@ -40,6 +40,7 @@ class SsoLoginServiceTest {
         props.setEnabled(true);
         props.setPortalBaseUrl("http://portal.test/api");
         props.setAppId("vend_app");
+        props.setAllowedTenantIds("T000004, eco");   // 白名单含测试租户 eco
         client = mock(PortalSsoClient.class);
         verifier = mock(PortalJwtVerifier.class);
         mapper = mock(AuthUserMapper.class);
@@ -74,6 +75,58 @@ class SsoLoginServiceTest {
         BizException e = assertThrows(BizException.class, () -> svc.loginByAuthCode("code1", "vend_app", "another-tenant"));
         assertEquals(401, e.getCode());
         verify(mapper, never()).insert(any(AuthUser.class));
+    }
+
+    @Test
+    void tenantNotInAllowList_rejected403() {
+        // 双源一致但不在 SSO_ALLOWED_TENANT_IDS → 403「该租户未开通本系统」
+        props.setAllowedTenantIds("T000004");
+        BizException e = assertThrows(BizException.class, () -> svc.loginByAuthCode("code1", "vend_app", "eco"));
+        assertEquals(403, e.getCode());
+        assertTrue(e.getMessage().contains("未开通"));
+        verify(mapper, never()).insert(any(AuthUser.class));
+    }
+
+    @Test
+    void allowListEmpty_rejectsAll() {
+        props.setAllowedTenantIds("");
+        BizException e = assertThrows(BizException.class, () -> svc.loginByAuthCode("code1", "vend_app", null));
+        assertEquals(403, e.getCode());
+    }
+
+    @Test
+    void jwtWithoutTenant_rejected() {
+        when(verifier.verify("j")).thenReturn(new PortalClaims("10086", null, "门户名", "13800000000", "aole-portal"));
+        BizException e = assertThrows(BizException.class, () -> svc.loginByAuthCode("code1", "vend_app", null));
+        assertEquals(403, e.getCode());
+    }
+
+    @Test
+    void phoneMatch_defaultRoleUnbound_getsBound() {
+        AuthUser old = new AuthUser();
+        old.setId(5L); old.setUsername("13800000000"); old.setDisplayName("老号"); old.setRole("店员"); old.setStatus(1);
+        // 第一次 selectOne(按 portal_uid)=null，第二次(按 username=手机号)=old
+        when(mapper.selectOne(any(Wrapper.class))).thenReturn(null, old);
+        SsoLoginService.Result r = svc.loginByAuthCode("code1", "vend_app", "eco");
+        assertFalse(r.isCreated());
+        assertEquals("10086", old.getPortalUid());
+        verify(mapper, never()).insert(any(AuthUser.class));
+    }
+
+    @Test
+    void phoneMatch_highRole_notBound_createsNew() {
+        // 同手机号老账号是「老板」→ 不自动绑，走建号（username 被占 → portal_<uid>）
+        AuthUser boss = new AuthUser();
+        boss.setId(1L); boss.setUsername("13800000000"); boss.setDisplayName("老板"); boss.setRole("老板"); boss.setStatus(1);
+        when(mapper.selectOne(any(Wrapper.class))).thenReturn(null, boss);
+        when(mapper.selectCount(any())).thenReturn(1L, 3L);   // username 已占用 / 表非空
+        SsoLoginService.Result r = svc.loginByAuthCode("code1", "vend_app", "eco");
+        assertTrue(r.isCreated());
+        assertNull(boss.getPortalUid());
+        ArgumentCaptor<AuthUser> cap = ArgumentCaptor.forClass(AuthUser.class);
+        verify(mapper).insert(cap.capture());
+        assertEquals("portal_10086", cap.getValue().getUsername());
+        assertEquals("店员", cap.getValue().getRole());
     }
 
     @Test
