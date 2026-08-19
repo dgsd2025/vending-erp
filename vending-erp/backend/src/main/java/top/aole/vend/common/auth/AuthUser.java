@@ -20,4 +20,6 @@ public class AuthUser {
     private Integer status;
     private LocalDateTime createdAt;
     private LocalDateTime lastLoginAt;
+    /** 平台门户 portal_uid（SSO 长期身份键，V1.0.100 加列，NULL=未绑定） */
+    private String portalUid;
 }

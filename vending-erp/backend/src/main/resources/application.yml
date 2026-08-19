@@ -48,9 +48,17 @@ knife4j:
   setting:
     language: zh_cn
 
-# SSO 留位(ole 门户单点登录,暂不实现)
+# 平台门户 SSO(aole-portal · eco.vvaix.com 免登直达)。全部由 ENV 注入,真值只放 .env 不入仓
+# SSO_ENABLED=false 时 SsoController 不挂载;容器内门户地址一般为 http://host.docker.internal:18151/api
 sso:
   enabled: ${SSO_ENABLED:false}
+  portal-base-url: ${SSO_PORTAL_BASE_URL:}
+  app-id: ${SSO_APP_ID:}
+  client-secret: ${SSO_CLIENT_SECRET:}
+  jwt-issuer: ${SSO_PORTAL_JWT_ISSUER:aole-portal,yunshan-portal}
+  # 租户白名单(逗号多值),缺省空=拒绝所有;生态管理平台租户 = T000004
+  allowed-tenant-ids: ${SSO_ALLOWED_TENANT_IDS:}
+  frontend-callback-path: ${SSO_FRONTEND_CALLBACK_PATH:/sso/callback}
 
 # LLM 网关(OpenAI 兼容,ENV 注入;开发期全 mock 不发真请求)
 llm:

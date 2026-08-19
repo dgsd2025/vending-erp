@@ -13,10 +13,20 @@ const request = axios.create({
   timeout: 15000,
 })
 
+/**
+ * 不注入 Authorization 的白名单(无登录态入口):平台门户 SSO 回调 /api/v1/sso/*、注册/登录。
+ * ole-portal-sso 硬约束 9:SSO 端点漏白名单会带上旧/空 token 干扰兑换重试。
+ * (本系统没有 X-Current-Company-Id 头,无需公司头排除表)
+ */
+const AUTH_WHITELIST_PREFIXES = ['/v1/sso/', '/auth/login', '/auth/register']
+function isAuthWhitelisted(url: string): boolean {
+  const path = url.replace(/^https?:\/\/[^/]+/, '').replace(/^\/api(?=\/)/, '')
+  return AUTH_WHITELIST_PREFIXES.some((p) => path.startsWith(p))
+}
+
 request.interceptors.request.use((config) => {
-  // 预留:SSO 接入后从 store/localStorage 取 token
   const token = localStorage.getItem('vend_token')
-  if (token) {
+  if (token && !isAuthWhitelisted(config.url || '')) {
     config.headers.Authorization = `Bearer ${token}`
   }
   return config
@@ -36,7 +46,7 @@ request.interceptors.response.use(
     // 2026-08-19 邀请码注册上线:401 → 回登录页
     if (error?.response?.status === 401) {
       clearSession()
-      if (!location.pathname.startsWith('/login')) location.href = `/login?redirect=${encodeURIComponent(location.pathname)}`
+      if (!location.pathname.startsWith('/login') && !location.pathname.startsWith('/sso/')) location.href = `/login?redirect=${encodeURIComponent(location.pathname)}`
       return Promise.reject(error)
     }
     ElMessage.error(error?.response?.data?.message || error?.message || '网络异常')

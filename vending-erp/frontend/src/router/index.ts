@@ -6,6 +6,8 @@ const router = createRouter({
   routes: [
     { path: '/', redirect: '/dashboard' },
     { path: '/login', name: 'login', meta: { title: '登录 / 注册', public: true }, component: () => import('@/views/Login.vue') },
+    // 平台门户 SSO 中转页：必须 public，不套登录守卫（ole-portal-sso checklist 第 8 步）
+    { path: '/sso/callback', name: 'sso-callback', meta: { title: '平台免登', public: true }, component: () => import('@/views/SsoCallback.vue') },
     { path: '/dashboard', name: 'dashboard', meta: { title: '工作台' }, component: () => import('@/views/Dashboard.vue') },
     { path: '/import', name: 'import', meta: { title: '导入中心' }, component: () => import('@/views/Imports.vue') },
     { path: '/outbound', name: 'outbound', meta: { title: '出库上架' }, component: () => import('@/views/Outbound.vue') },

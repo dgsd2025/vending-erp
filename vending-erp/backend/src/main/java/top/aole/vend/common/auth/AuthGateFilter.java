@@ -36,8 +36,9 @@ public class AuthGateFilter extends OncePerRequestFilter {
     @Value("${vend.auth.placeholder-headers-enabled:false}")
     private boolean placeholderHeadersEnabled;
 
+    /** /v1/sso/ = 平台门户 SSO 回调（无登录态入口，ole-portal-sso checklist 第 4 步） */
     private static final String[] PUBLIC_PREFIXES = {
-            "/auth/", "/v1/health", "/actuator", "/doc.html", "/webjars/", "/swagger-resources", "/v2/api-docs", "/v3/api-docs", "/swagger-ui", "/favicon.ico", "/error"
+            "/auth/", "/v1/sso/", "/v1/health", "/actuator", "/doc.html", "/webjars/", "/swagger-resources", "/v2/api-docs", "/v3/api-docs", "/swagger-ui", "/favicon.ico", "/error"
     };
 
     @Override
