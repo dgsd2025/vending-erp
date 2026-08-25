@@ -37,7 +37,21 @@ request.interceptors.response.use(
     // 文件下载(responseType: 'blob')没有 R{code} 外壳,直接把二进制交出去。
     // 走 axios 实例而不是 <a href> 是因为 AuthGateFilter 要 Bearer 令牌,裸链接会 401。
     if (response.config.responseType === 'blob') {
-      return response.data
+      const blob = response.data as Blob
+      // 本后端的异常也是 HTTP 200 + R{code:500} JSON,不拦的话会把报错当成文件存下来
+      if (blob?.type?.includes('json')) {
+        return blob.text().then((text) => {
+          let message = '导出失败'
+          try {
+            message = JSON.parse(text)?.message || message
+          } catch {
+            // 不是 JSON 就用兜底文案
+          }
+          ElMessage.error(message)
+          return Promise.reject(new Error(message))
+        })
+      }
+      return blob
     }
     const res = response.data
     if (res && res.code === 200) {
