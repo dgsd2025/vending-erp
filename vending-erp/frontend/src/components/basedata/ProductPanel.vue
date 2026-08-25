@@ -9,6 +9,7 @@ import {
   type Product,
 } from '@/api/basedata'
 import ProductFormDialog from './ProductFormDialog.vue'
+import ProductImportDialog from './ProductImportDialog.vue'
 import AliasManageDialog from './AliasManageDialog.vue'
 import AliasPendingDrawer from './AliasPendingDrawer.vue'
 
@@ -45,6 +46,7 @@ const editing = ref<Product | null>(null)
 const aliasVisible = ref(false)
 const aliasProduct = ref<Product | null>(null)
 const pendingVisible = ref(false)
+const importVisible = ref(false)
 
 const grossMargin = computed(() => (p: Product) => {
   const cost = Number(p.refCost)
@@ -150,6 +152,7 @@ defineExpose({ reload: load })
         @keyup.enter="query.current = 1; load()"
         @clear="query.current = 1; load()"
       />
+      <el-button @click="importVisible = true">⬆ 导入商品列表</el-button>
       <el-button type="primary" @click="openCreate">＋ 新建商品</el-button>
     </div>
 
@@ -218,6 +221,7 @@ defineExpose({ reload: load })
     </p>
 
     <ProductFormDialog v-model:visible="formVisible" :product="editing" @saved="load" />
+    <ProductImportDialog v-model:visible="importVisible" @saved="load(); loadPendingCount()" />
     <AliasManageDialog v-model:visible="aliasVisible" :product="aliasProduct" @changed="loadPendingCount" />
     <AliasPendingDrawer v-model:visible="pendingVisible" @changed="loadPendingCount(); load()" />
   </div>
