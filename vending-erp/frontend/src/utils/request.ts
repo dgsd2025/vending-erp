@@ -34,6 +34,11 @@ request.interceptors.request.use((config) => {
 
 request.interceptors.response.use(
   (response) => {
+    // 文件下载(responseType: 'blob')没有 R{code} 外壳,直接把二进制交出去。
+    // 走 axios 实例而不是 <a href> 是因为 AuthGateFilter 要 Bearer 令牌,裸链接会 401。
+    if (response.config.responseType === 'blob') {
+      return response.data
+    }
     const res = response.data
     if (res && res.code === 200) {
       return res.data

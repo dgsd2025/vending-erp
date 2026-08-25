@@ -167,6 +167,79 @@ export function changeProductStatus(id: number, targetStatus: string): Promise<P
   return request.put(`/v1/basedata/products/${id}/status`, { targetStatus }, opHeaders())
 }
 
+// ---------- 商品建档导入(附件上传 → 自动解析 → 确认入档) ----------
+
+/** 解析出来的一行,前端可就地编辑后原样回传;数字列一律 string,校验在服务端 */
+export interface ProductImportRow {
+  rowNo?: number
+  skuCode: string
+  productName: string
+  barcode?: string | null
+  category?: string | null
+  unit?: string | null
+  boxSpec?: string | null
+  shelfLifeDays?: string | null
+  refCost?: string | null
+  refPrice?: string | null
+  minDisplayQty?: string | null
+  remark?: string | null
+  action?: '新建' | '更新' | '错误'
+  errorMsg?: string | null
+  existingProductId?: number | null
+}
+
+export interface ProductImportParseResp {
+  fileName: string
+  rowTotal: number
+  createCount: number
+  updateCount: number
+  errorCount: number
+  /** 建完档能顺带消掉的待绑别名条数 */
+  pendingHitCount: number
+  headers: string[]
+  warnings: string[]
+  rows: ProductImportRow[]
+}
+
+export interface ProductImportCommitResp {
+  created: number
+  updated: number
+  failed: number
+  aliasBound: number
+  pendingCleared: number
+  errors: { rowNo: number | null; skuCode: string | null; message: string }[]
+}
+
+/** 上传附件,立刻解析成商品行(不落库) */
+export function parseProductImport(file: File): Promise<ProductImportParseResp> {
+  const form = new FormData()
+  form.append('file', file)
+  return request.post('/v1/basedata/products/import/parse', form, {
+    headers: { 'Content-Type': 'multipart/form-data' },
+    timeout: 120000,
+  })
+}
+
+/** 按列表内容入档(新建/更新 + 绑后台别名 + 消待绑队列) */
+export function commitProductImport(rows: ProductImportRow[]): Promise<ProductImportCommitResp> {
+  return request.post('/v1/basedata/products/import/commit', { rows }, { ...opHeaders(), timeout: 300000 })
+}
+
+/** 下载导入模板(走 axios 带令牌,再本地存盘) */
+export async function downloadProductImportTemplate(): Promise<void> {
+  const blob = (await request.get('/v1/basedata/products/import/template', {
+    responseType: 'blob',
+  })) as unknown as Blob
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = '商品导入模板.xlsx'
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  URL.revokeObjectURL(url)
+}
+
 // ---------- SKU 别名 ----------
 
 export function pageAliases(params: {
